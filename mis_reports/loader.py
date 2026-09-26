@@ -25,7 +25,11 @@ PURCHASE_COLUMNS = {
     "bill_no": "BILL NO.",
     "bill_date": "BILL DATE",
     "stock_date": "WH In Date",
+    "truck_no": "TRUCK NO",
     "commodity": "COMMODITY",
+    "hsn": "HSN CODE",
+    "no_of_bags": "NO OF BAG",
+    "bill_weight": "BILL WEIGHT",
     "qty": "WEIGHT",
     "rate": "RATE",
     "amount": "Amount befor GST",
@@ -68,7 +72,11 @@ SALES_COLUMNS = {
     "bill_no": "BILL NO.",
     "bill_date": "BILL DATE",
     "stock_date": "Delivery Date",
+    "truck_no": "TRUCK NO",
     "commodity": "COMMODITY",
+    "hsn": "HSN CODE",
+    "no_of_bags": "NO OF BAG",
+    "bill_weight": "BILL WEIGHT",
     "qty": "WH Weight",
     "rate": "RATE",
     "amount": "Amount before GST",
@@ -105,7 +113,7 @@ PURCHASE_POST_PARTS = ["storage", "brokerage", "sampling", "repacking", "transpo
 SALES_POST_PARTS = ["brokerage", "loading", "repacking"]
 
 TEXT_FIELDS = {"company", "type", "sub_type", "warehouse", "broker", "party", "gstin",
-               "branch", "bill_no", "commodity", "status", "contract_no"}
+               "branch", "bill_no", "commodity", "status", "contract_no", "truck_no", "hsn"}
 DATE_FIELDS = {"bill_date", "stock_date", "pay_date", "date"}
 
 
@@ -159,10 +167,19 @@ def _read_table(xls: pd.ExcelFile, sheet: str, columns: dict, marker: str,
         if fld in TEXT_FIELDS:
             out[fld] = out[fld].where(out[fld].isna(), out[fld].astype(str).str.strip())
         elif fld in DATE_FIELDS:
-            out[fld] = pd.to_datetime(out[fld], errors="coerce")
+            out[fld] = pd.to_datetime(out[fld].map(_as_date), errors="coerce")
         elif fld != "source_row":
             out[fld] = pd.to_numeric(out[fld], errors="coerce")
     return out.reset_index(drop=True)
+
+
+def _as_date(v):
+    """Dates may arrive as datetimes, Excel serial numbers or text."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return pd.NaT
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(v)) if 1 < v < 100000 else pd.NaT
+    return pd.to_datetime(v, errors="coerce", dayfirst=True)
 
 
 def _fill(df: pd.DataFrame, col: str, fallback: pd.Series) -> None:

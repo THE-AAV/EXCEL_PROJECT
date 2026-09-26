@@ -3,3 +3,4 @@ openpyxl>=3.1
 xlsxwriter>=3.1
 streamlit>=1.50
 altair>=5.0
+lxml>=4.9

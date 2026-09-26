@@ -1,6 +1,17 @@
 # Business Reports from the Master Sheet
 
-Turns the **Master Sheet (Domestic)** Excel file into these reports automatically:
+A simple app for the **Master Sheet (Domestic)** Excel file. You can:
+
+1. **Enter transactions** in the app, following the business flow below. Each entry is written
+   straight into the Master Sheet, so the Excel file is always up to date.
+2. **View reports** that are worked out automatically from the Master Sheet.
+
+```
+Purchase Order → Purchase Invoice → Debit Note → Expenses → Payment
+Sales Order    → Sales Invoice    → Credit Note → Receipt
+```
+
+The reports are:
 
 | Report | What it shows |
 |---|---|
@@ -11,7 +22,7 @@ Turns the **Master Sheet (Domestic)** Excel file into these reports automaticall
 | **Open orders** | Pending PO / SO quantity and value per product |
 | **Data checks** | Rows in the Master Sheet with a missing date, quantity or amount |
 
-You don't change anything in the Master Sheet. Keep entering data as you do now.
+You can keep using Excel as well. Changes saved in Excel show up in the app within a few seconds.
 
 ---
 
@@ -22,18 +33,46 @@ You don't change anything in the Master Sheet. Keep entering data as you do now.
    On Windows, tick **"Add Python to PATH"** during installation.
 2. Download or copy this folder to the computer.
 
-### Viewing reports on screen
+### Starting the app
 1. Double-click **`Start_Reports_App.bat`** (Windows) or run `./start_app.sh` (Mac/Linux).
    The first run takes a few minutes to set up. After that it opens in seconds.
 2. The app opens in your web browser.
-3. **Step 1:** Upload the Master Sheet with the *Upload* button, or copy the file into the
-   **`input`** folder. The app opens the newest file in that folder by itself.
-4. **Step 2:** Pick the *Balances as on* date. You can also narrow the reports to a P&L period,
+3. The first time, open **📁 Master Sheet file** on the left and upload the Master Sheet, or copy the
+   file into the **`input`** folder. That file becomes the *working file*. The app reads it and saves
+   entries into it. If there are several files in `input`, the newest one is used.
+
+### Entering transactions (📝 Enter transactions)
+Pick a step at the top, fill in the form and click **Save**. Fields marked * are required.
+Dropdowns list the names already in the sheet. You can also type a new name.
+
+| Step | What it does in the Master Sheet |
+|---|---|
+| ① Purchase Order | Adds a row to the **PO** sheet (contract number is given automatically) |
+| ② Purchase Invoice | Adds a row to the **Purchase** sheet with the sheet's own formulas (amount, GST, bill amount, due days ...). If you pick an open order, its party, product, rate and balance quantity are filled in, and the order's *Recd Qty* is updated, closing it when fully received |
+| ③ Debit Note | Adds the amount to *Debit Note / Other de.* on the chosen purchase bill |
+| ④ Expenses | Sets Adhat, AMC, Labour, Transportation, WH Load, Bags, Other, Discount, Vatav, Storage, Brokerage, Sampling, Repacking on a purchase bill, or Brokerage, Loading/Unloading, Repacking, Discount on a sales bill |
+| ⑤ Payment | Spreads the amount over the supplier's oldest unpaid bills (you can change the split and add TDS), writes *Date*, *Amount* and *TDS* on each bill and marks fully paid bills **Paid** |
+| ⑥ Sales Order | Adds a row to the **SO** sheet |
+| ⑦ Sales Invoice | Adds a row to the **Sales** sheet, like the purchase invoice |
+| ⑧ Credit Note | Adds the amount to *Debit Note / Other de.* (the sales sheet's deduction column) on the chosen sales bill |
+| ⑨ Receipt | Like Payment, for customers. Fully received bills are marked **Recd** |
+
+Things to know:
+- **Close the Master Sheet in Excel before saving from the app.** Windows locks a file while Excel
+  has it open. If it is open, the app says so and nothing you typed is lost. Close Excel, then click Save again.
+- **Every save first makes a backup** in `input/backups` (the last 30 are kept). **↩️ Undo last entry**
+  puts the file back the way it was before the last save.
+- Every entry is listed under **Recent entries** and in `input/activity_log.csv`.
+- The app changes only the rows it writes. Your formulas, dropdowns, the `masters` sheet lists
+  and all other sheets are left as they are. Excel recalculates everything the next time you open the file.
+
+### Viewing reports (📊 View reports)
+1. Pick the *Balances as on* date. You can also narrow the reports to a P&L period,
    products, Type (Local/Import), Sub Type or Company.
-5. Use the tabs to switch between **Dashboard**, **Product P&L**, **Creditors**, **Debtors**,
+2. Use the tabs to switch between **Dashboard**, **Product P&L**, **Creditors**, **Debtors**,
    **Open Orders** and **Data Checks**. In the Creditors and Debtors tabs you can search for a party
    and pick one to see its outstanding bills.
-6. **Step 3:** Click **Download all reports (Excel)** to get the full formatted report file.
+3. Click **Download all reports (Excel)** to get the full formatted report file.
 
 ### Getting the Excel reports without opening the app
 - Put the Master Sheet in the **`input`** folder and double-click **`Generate_Reports_Now.bat`**.
@@ -87,10 +126,16 @@ so it stays correct if you edit a figure.
 ## For IT / developers
 
 ```
-app.py                  Streamlit web app (the UI)
+app.py                  Streamlit web app shell (working file, mode switch, auto-reload)
+ui/entries_page.py      the nine transaction forms
+ui/reports_page.py      dashboard and report tabs
 generate_reports.py     command-line / scheduled / --watch report generation
 mis_reports/loader.py   reads Purchase, Sales, PO, SO and opening balances from the Master Sheet
 mis_reports/reports.py  P&L, creditor/debtor ledgers with FIFO ageing, open orders, data checks
+mis_reports/entries.py  writes orders, invoices, notes, expenses, payments and receipts
+mis_reports/xlsx_edit.py      edits only the touched rows in the .xlsx XML (keeps dynamic arrays,
+                              data validation, shared formulas); fills formulas down like Excel and
+                              stores their calculated values
 mis_reports/excel_export.py   formatted Excel report pack
 config/product_aliases.csv    product name mapping
 tests/                  pytest suite (builds its own small Master Sheet, no real data needed)
@@ -108,3 +153,8 @@ so adding or moving columns in the Master Sheet does not break the reports.
 The reader uses the values Excel last calculated. A file generated by another program and never
 opened in Excel should be opened and saved in Excel first.
 The `input/` and `output/` folders are git-ignored, so business data is never committed.
+
+New invoice rows copy the formula most of the last 30 rows use in each column (like Excel's
+fill-down). A few columns always use a fixed formula: purchase amount = weight × rate, pre-bill total,
+net amount, GST at the rate entered, and final amount = bill amount − Vatav. The file is saved with
+"recalculate on open", and the workbook's calcChain part is removed so Excel rebuilds it.
