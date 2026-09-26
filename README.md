@@ -69,6 +69,22 @@ Things to know:
 - The app changes only the rows it writes. Your formulas, dropdowns, the `masters` sheet lists
   and all other sheets are left as they are. Excel recalculates everything the next time you open the file.
 
+### Viewing the sheets (📄 View sheets)
+A read-only view of any workbook that looks like Excel: column letters, row numbers, your fonts, colours,
+borders, number and date formats, merged cells and frozen headers, with a **tab for every sheet** at the bottom.
+- **Workbook:** the working Master Sheet, other files in `input`, saved report files in `output`, or any
+  Excel file you open here (view only - it is not changed or saved).
+- **Updates by itself** within a few seconds whenever the file is saved, from this app or from Excel.
+- **Hover over a cell** to see its formula, or switch on **Show formulas** to see all of them.
+  A cell showing **…** has a formula Excel has not worked out yet (it will when the file is next opened in Excel).
+- **🔍 Find** shows only the rows containing the text you type.
+- **⏷ Filter & sort** works like Excel's filter: pick a column (by its header), tick the values to keep
+  (including *(Blanks)*), or use *Text contains*, a *Min / Max* for numbers or a *From / To date* for dates.
+  Filters on several columns combine. **Sort by** any column, smallest or largest first. The header row is
+  found automatically (the sheet's own filter row or frozen rows) and can be changed. Filtered columns are
+  marked on the header, and the row numbers stay the sheet's own.
+- **Zoom**, and **Numbers** in Indian (12,34,567) or international (1,234,567) grouping.
+
 ### Viewing reports (📊 View reports)
 1. Pick the *Balances as on* date. You can also narrow the reports to a P&L period,
    products, Type (Local/Import), Sub Type or Company.
@@ -134,6 +150,9 @@ so it stays correct if you edit a figure.
 app.py                  Streamlit web app shell (working file, mode switch, auto-reload)
 ui/entries_page.py      the nine transaction forms
 ui/reports_page.py      dashboard and report tabs
+ui/viewer_page.py       'View sheets' page (file picker, sheet tabs, find, filter & sort)
+ui/sheet_viewer.py      turns a workbook into Excel-like HTML (styles, number formats, merges, frozen panes)
+                        and does the filtering / sorting
 generate_reports.py     command-line / scheduled / --watch report generation
 mis_reports/loader.py   reads Purchase, Sales, PO, SO and opening balances from the Master Sheet
 mis_reports/reports.py  P&L, creditor/debtor ledgers with FIFO ageing, open orders, data checks

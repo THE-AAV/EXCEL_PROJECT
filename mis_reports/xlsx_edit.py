@@ -11,6 +11,7 @@ the next time the file is opened.
 """
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
@@ -359,6 +360,17 @@ class Sheet:
             return v.text == "1"
         return float(v.text)
 
+    def uncalculated(self) -> set[str]:
+        """Formula cells that have no stored result (Excel will work them out when it opens the file)."""
+        out = set()
+        for ref, c in self.cells.items():
+            if c.find(q("f")) is None:
+                continue
+            v = c.find(q("v"))
+            if v is None or (not v.text and c.get("t") not in ("str", "inlineStr")):
+                out.add(ref)
+        return out
+
     def formula(self, ref: str) -> str | None:
         c = self.cells.get(ref)
         f = c.find(q("f")) if c is not None else None
@@ -552,8 +564,10 @@ def _fmt_num(v: float) -> str:
 # --------------------------------------------------------------------------- workbook
 class Book:
     def __init__(self, path):
-        self.path = str(path)
-        with zipfile.ZipFile(self.path) as z:
+        """path: a file path, or bytes / a file object for reading only."""
+        src = io.BytesIO(path) if isinstance(path, (bytes, bytearray)) else path
+        self.path = str(path) if isinstance(path, (str, os.PathLike)) else None
+        with zipfile.ZipFile(src) as z:
             self.infos = z.infolist()
             self.parts = {i.filename: z.read(i.filename) for i in self.infos}
         wb = etree.fromstring(self.parts["xl/workbook.xml"])

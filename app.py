@@ -1,4 +1,4 @@
-"""Business Reports app: enter transactions into the Master Sheet and view reports.
+"""Business Reports app: enter transactions into the Master Sheet, view reports and view the sheets.
 
 Start it with Start_Reports_App.bat (Windows) or ./start_app.sh (Mac/Linux).
 """
@@ -14,7 +14,7 @@ from mis_reports.entries import MasterFile, working_file
 from mis_reports.loader import load_master
 from mis_reports.pipeline import load_aliases, run_reports
 from mis_reports.xlsx_edit import backup
-from ui import entries_page, reports_page
+from ui import entries_page, reports_page, viewer_page
 from ui.common import CSS
 
 BASE = Path(__file__).resolve().parent
@@ -37,7 +37,7 @@ def file_stamp(path: Path):
 
 # --------------------------------------------------------------------------- sidebar: working file
 st.sidebar.title("📊 Business Reports")
-mode = st.sidebar.radio("What do you want to do?", ["📝 Enter transactions", "📊 View reports"],
+mode = st.sidebar.radio("What do you want to do?", ["📝 Enter transactions", "📊 View reports", "📄 View sheets"],
                         key="mode", label_visibility="collapsed")
 
 path = working_file(INPUT_DIR)
@@ -61,6 +61,33 @@ with st.sidebar.expander("📁 Master Sheet file", expanded=path is None):
         st.cache_data.clear()
         st.rerun()
 
+
+@st.fragment(run_every="5s")
+def watch_files():
+    """Reload the app when a file on screen is saved from Excel (or anywhere else)."""
+    watched = ([path] if path else []) + [Path(p) for p in st.session_state.get("watch_extra", [])]
+    stamps = {}
+    for p in watched:
+        try:
+            stamps[str(p)] = file_stamp(p)
+        except (FileNotFoundError, PermissionError):
+            return
+    seen = st.session_state.setdefault("file_stamps", stamps)
+    if any(seen.get(k) not in (None, v) for k, v in stamps.items()):
+        st.session_state["file_stamps"] = stamps
+        st.rerun(scope="app")
+    elif stamps != seen:
+        st.session_state["file_stamps"] = stamps
+
+
+with st.sidebar:
+    watch_files()
+
+if mode.startswith("📄"):
+    viewer_page.render(path, INPUT_DIR, OUTPUT_DIR)
+    st.stop()
+st.session_state["watch_extra"] = []
+
 if path is None:
     st.title("Welcome 👋")
     st.info("**To begin:** open **📁 Master Sheet file** on the left and upload your Master Sheet, **or** copy it "
@@ -70,23 +97,6 @@ if path is None:
 st.sidebar.caption(f"Working file: **{path.name}**  \nLast saved "
                    f"{datetime.fromtimestamp(path.stat().st_mtime):%d-%b-%Y %H:%M:%S}")
 
-
-@st.fragment(run_every="5s")
-def watch_file():
-    """Reload the app when the Master Sheet is saved from Excel (or anywhere else)."""
-    try:
-        stamp = file_stamp(path)
-    except FileNotFoundError:
-        return
-    seen = st.session_state.setdefault("file_stamp", stamp)
-    if stamp != seen:
-        st.session_state["file_stamp"] = stamp
-        st.rerun(scope="app")
-
-
-with st.sidebar:
-    watch_file()
-
 try:
     data = cached_load(str(path), *file_stamp(path))
 except PermissionError:
@@ -95,7 +105,7 @@ except PermissionError:
 except Exception as exc:  # show a friendly message instead of a stack trace
     st.error(f"This file could not be read as a Master Sheet: {exc}")
     st.stop()
-st.session_state["file_stamp"] = file_stamp(path)
+st.session_state.setdefault("file_stamps", {})[str(path)] = file_stamp(path)
 
 aliases = load_aliases()
 master = MasterFile(path, backup_dir=INPUT_DIR / "backups", log_path=INPUT_DIR / "activity_log.csv")
