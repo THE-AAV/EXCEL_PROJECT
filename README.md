@@ -19,7 +19,10 @@ The reports are:
 | **Creditors** (payables) | Every purchase party: opening balance, amount payable, paid, TDS, debit notes, closing balance, split by age (0-30 / 31-60 / 61-90 / over 90 days / undated) |
 | **Debtors** (receivables) | Every sales party: the same layout for what customers owe us |
 | **Outstanding bills** | Bill-by-bill list behind each creditor and debtor balance |
-| **Open orders** | Pending PO / SO quantity and value per product |
+| **Stock summary** | Per product: purchased, returned to suppliers, sold, returned by customers, stock in hand and its value, plus open PO / SO quantities and stock after orders |
+| **Purchase & sales orders** | Every contract: quantity, cancelled, received / delivered, balance, value, % done, status, invoices, days open |
+| **Debit / credit notes** | Every note with quantity, value, GST, other charges and reason |
+| **Bill-wise margin** | Margin on each sales bill linked to the purchase bill the goods came from |
 | **Data checks** | Rows in the Master Sheet with a missing date, quantity or amount |
 
 You can keep using Excel as well. Changes saved in Excel show up in the app within a few seconds.
@@ -47,14 +50,14 @@ Dropdowns list the names already in the sheet. You can also type a new name.
 
 | Step | What it does in the Master Sheet |
 |---|---|
-| ① Purchase Order | Adds a row to the **PO** sheet (contract number is given automatically) |
-| ② Purchase Invoice | Adds a row to the **Purchase** sheet with the sheet's own formulas (amount, GST, bill amount, due days ...). If you pick an open order, its party, product, rate and balance quantity are filled in, and the order's *Recd Qty* is updated, closing it when fully received |
-| ③ Debit Note | Adds the amount to *Debit Note / Other de.* on the chosen purchase bill |
+| ① Purchase Order | Adds a row to the **PO** sheet. Contract No. is **automatic** (next in your series, e.g. `PO/26-27/009` → `PO/26-27/010`) or **your own** (duplicates are blocked) |
+| ② Purchase Invoice | One bill with **one or more items**, each item optionally **against a different contract** (the contract's product, rate and balance quantity are filled in). Each item becomes a row in the **Purchase** sheet with the sheet's own formulas, and each contract's *Recd Qty* is updated, closing it when fully received. The **💰 Pre-bill expenses** tab takes Adhat, AMC, Labour, Transportation, WH Load, Bags, Other and Discount for the whole bill and splits them over the items by value |
+| ③ Debit Note | Goods returned, weight shortage, quality claim or rate difference: **quantity × rate** (or an amount only), **GST %** (defaults to the bill's rate) and **other charges / expenses**. The note gets an automatic number (`DN-0001` ...) or your own, is listed in a new **Debit Notes** sheet, and its total is added to *Debit Note / Other de.* on the bill. Its quantity and value come off purchases in the P&L and stock |
 | ④ Expenses | Sets Adhat, AMC, Labour, Transportation, WH Load, Bags, Other, Discount, Vatav, Storage, Brokerage, Sampling, Repacking on a purchase bill, or Brokerage, Loading/Unloading, Repacking, Discount on a sales bill |
 | ⑤ Payment | Spreads the amount over the supplier's oldest unpaid bills (you can change the split and add TDS), writes *Date*, *Amount* and *TDS* on each bill and marks fully paid bills **Paid** |
-| ⑥ Sales Order | Adds a row to the **SO** sheet |
-| ⑦ Sales Invoice | Adds a row to the **Sales** sheet, like the purchase invoice |
-| ⑧ Credit Note | Adds the amount to *Debit Note / Other de.* (the sales sheet's deduction column) on the chosen sales bill |
+| ⑥ Sales Order | Adds a row to the **SO** sheet, with automatic or your own contract number |
+| ⑦ Sales Invoice | Like the purchase invoice (several items, each against a sales contract). The invoice number is suggested as the next in your series. Each item can **optionally be linked to the purchase bill** the goods came from: the purchase bill no. goes in *P Inv* on the sales row and the sales bill no. in *S Inv* on the purchase row, and the **Bill-wise margin** report shows the profit on it |
+| ⑧ Credit Note | Like the debit note, for sales bills (numbers `CN-0001` ...), listed in a new **Credit Notes** sheet. Its quantity goes back into stock and its value comes off sales |
 | ⑨ Receipt | Like Payment, for customers. Fully received bills are marked **Recd** |
 
 Things to know:
@@ -100,7 +103,9 @@ Capital/small letters and extra spaces are already ignored. The mapping is saved
 - *Net Purchase Cost* = Amount before GST + pre-bill expenses (Adhat, AMC, Labour, Transportation,
   WH Load, Bags, Other) − Discount. This is the same as the `Display` sheet.
 - *Net Sales* = Sales Amount before GST − Discount.
-- *Closing stock* = purchased kg − sold kg, valued at the average landed cost per kg.
+- Debit notes: their quantity comes off the kg purchased and their value before GST plus other charges comes
+  off the purchase cost. Credit notes do the same for sales.
+- *Closing stock* = purchased kg − debit-note kg − sold kg + credit-note kg, valued at the average landed cost per kg.
 - *Cost of Goods Sold* = Net Purchase Cost − Closing Stock Value.
 - *Net Profit* = Net Sales − Cost of Goods Sold − post-bill expenses (purchase: storage, brokerage,
   sampling, repacking, transport; sales: brokerage, loading/unloading, repacking).

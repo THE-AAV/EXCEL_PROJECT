@@ -600,6 +600,56 @@ class Book:
             self._sheets[name] = Sheet(self, name, self.sheet_parts[name])
         return self._sheets[name]
 
+    def add_sheet(self, name: str, headers: list[str], header_style: str | None = None,
+                  width: float = 16) -> "Sheet":
+        """Append a new worksheet with a header row (used for the note registers)."""
+        if name in self.sheet_parts:
+            return self.sheet(name)
+        n = 1
+        while f"xl/worksheets/sheet{n}.xml" in self.parts:
+            n += 1
+        part = f"xl/worksheets/sheet{n}.xml"
+        last_col = num_to_col(len(headers))
+        style = f' s="{header_style}"' if header_style else ""
+        cells = "".join(f'<c r="{num_to_col(i + 1)}1"{style} t="inlineStr"><is><t>{_xml_escape(h)}</t></is></c>'
+                        for i, h in enumerate(headers))
+        xml = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+               f'<worksheet xmlns="{NS}" xmlns:r="{RNS}"><dimension ref="A1:{last_col}1"/>'
+               '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" '
+               'state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>'
+               f'<cols><col min="1" max="{len(headers)}" width="{width}" customWidth="1"/></cols>'
+               f'<sheetData><row r="1">{cells}</row></sheetData>'
+               '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>')
+        self.parts[part] = xml.encode("utf-8")
+        # relationship, sheet entry and content type
+        rels = etree.fromstring(self.parts["xl/_rels/workbook.xml.rels"])
+        ids = {r.get("Id") for r in rels}
+        k = 1
+        while f"rId{k}" in ids:
+            k += 1
+        rel = etree.SubElement(rels, f"{{{PKG_RNS}}}Relationship")
+        rel.set("Id", f"rId{k}")
+        rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet")
+        rel.set("Target", f"worksheets/sheet{n}.xml")
+        self.parts["xl/_rels/workbook.xml.rels"] = etree.tostring(rels, xml_declaration=True, encoding="UTF-8",
+                                                                 standalone=True)
+        wb = etree.fromstring(self.parts["xl/workbook.xml"])
+        sheets = wb.find(q("sheets"))
+        sid = max(int(x.get("sheetId")) for x in sheets) + 1
+        el = etree.SubElement(sheets, q("sheet"))
+        el.set("name", name)
+        el.set("sheetId", str(sid))
+        el.set(f"{{{RNS}}}id", f"rId{k}")
+        self.parts["xl/workbook.xml"] = etree.tostring(wb, xml_declaration=True, encoding="UTF-8", standalone=True)
+        ct = etree.fromstring(self.parts["[Content_Types].xml"])
+        o = etree.SubElement(ct, f"{{{CT_NS}}}Override")
+        o.set("PartName", f"/{part}")
+        o.set("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
+        self.parts["[Content_Types].xml"] = etree.tostring(ct, xml_declaration=True, encoding="UTF-8",
+                                                          standalone=True)
+        self.sheet_parts[name] = part
+        return self.sheet(name)
+
     def _patch_workbook(self):
         wb = etree.fromstring(self.parts["xl/workbook.xml"])
         calc = wb.find(q("calcPr"))
@@ -664,6 +714,10 @@ class Book:
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+
+
+def _xml_escape(text: str) -> str:
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _quote(sheet: str) -> str:

@@ -69,38 +69,46 @@ def _clean(v):
 
 # --------------------------------------------------------------------------- P&L (vertical statement)
 PNL_LINES = [
-    # (label, key or formula template, style, total_mode) ; {c} = this column letter, {rX} = row of key X
-    ("PURCHASE", None, "section", None),
-    ("Purchase Qty (kg)", "purchase_qty", "money", "sum"),
-    ("Purchase Value (excl. GST)", "purchase_value", "money", "sum"),
-    ("Add: Pre-bill Expenses", "pre_bill_exp", "money", "sum"),
-    ("Less: Purchase Discount", "purchase_discount", "money", "sum"),
-    ("Net Purchase Cost", "={c}{purchase_value}+{c}{pre_bill_exp}-{c}{purchase_discount}", "money_bold", "sum"),
-    ("Avg Landed Cost per kg", "=IF({c}{purchase_qty}>0,{c}{net_purchase}/{c}{purchase_qty},0)", "rate", "ratio"),
-    ("SALES", None, "section", None),
-    ("Sales Qty (kg)", "sales_qty", "money", "sum"),
-    ("Sales Value (excl. GST)", "sales_value", "money", "sum"),
-    ("Less: Sales Discount", "sales_discount", "money", "sum"),
-    ("Net Sales", "={c}{sales_value}-{c}{sales_discount}", "money_bold", "sum"),
-    ("Avg Sale Rate per kg", "=IF({c}{sales_qty}>0,{c}{net_sales}/{c}{sales_qty},0)", "rate", "ratio"),
-    ("STOCK", None, "section", None),
-    ("Closing Stock Qty (kg)", "={c}{purchase_qty}-{c}{sales_qty}", "money", "sum"),
-    ("Closing Stock Value (at avg cost)", "={c}{closing_qty}*{c}{avg_cost_rate}", "money", "sum"),
-    ("PROFIT & LOSS", None, "section", None),
-    ("Cost of Goods Sold", "={c}{net_purchase}-{c}{closing_value}", "money", "sum"),
-    ("Gross Profit", "={c}{net_sales}-{c}{cogs}", "money_bold", "sum"),
-    ("Less: Post-bill Exp. (Purchase)", "post_exp_purchase", "money", "sum"),
-    ("Less: Post-bill Exp. (Sales)", "post_exp_sales", "money", "sum"),
-    ("Net Profit / (Loss)", "={c}{gross_profit}-{c}{post_exp_purchase}-{c}{post_exp_sales}", "money_bold", "sum"),
-    ("Net Margin %", "=IF({c}{net_sales}<>0,{c}{net_profit}/{c}{net_sales},0)", "pct", "ratio"),
-    ("Remark", "remark", "note", None),
+    # (label, key, value or formula template, style, total_mode); {c} = this column, {key} = row of that key
+    ("PURCHASE", "", None, "section", None),
+    ("Purchase Qty (kg)", "purchase_qty", "purchase_qty", "money", "sum"),
+    ("Less: Qty on Debit Notes (kg)", "purchase_return_qty", "purchase_return_qty", "money", "sum"),
+    ("Net Purchase Qty (kg)", "net_purchase_qty", "={c}{purchase_qty}-{c}{purchase_return_qty}", "money", "sum"),
+    ("Purchase Value (excl. GST)", "purchase_value", "purchase_value", "money", "sum"),
+    ("Add: Pre-bill Expenses", "pre_bill_exp", "pre_bill_exp", "money", "sum"),
+    ("Less: Purchase Discount", "purchase_discount", "purchase_discount", "money", "sum"),
+    ("Less: Debit Notes (excl. GST)", "purchase_returns", "purchase_returns", "money", "sum"),
+    ("Net Purchase Cost", "net_purchase",
+     "={c}{purchase_value}+{c}{pre_bill_exp}-{c}{purchase_discount}-{c}{purchase_returns}", "money_bold", "sum"),
+    ("Avg Landed Cost per kg", "avg_cost_rate", "=IF({c}{net_purchase_qty}>0,{c}{net_purchase}/{c}{net_purchase_qty},0)",
+     "rate", "ratio"),
+    ("SALES", "", None, "section", None),
+    ("Sales Qty (kg)", "sales_qty", "sales_qty", "money", "sum"),
+    ("Less: Qty on Credit Notes (kg)", "sales_return_qty", "sales_return_qty", "money", "sum"),
+    ("Net Sales Qty (kg)", "net_sales_qty", "={c}{sales_qty}-{c}{sales_return_qty}", "money", "sum"),
+    ("Sales Value (excl. GST)", "sales_value", "sales_value", "money", "sum"),
+    ("Less: Sales Discount", "sales_discount", "sales_discount", "money", "sum"),
+    ("Less: Credit Notes (excl. GST)", "sales_returns", "sales_returns", "money", "sum"),
+    ("Net Sales", "net_sales", "={c}{sales_value}-{c}{sales_discount}-{c}{sales_returns}", "money_bold", "sum"),
+    ("Avg Sale Rate per kg", "avg_sales_rate", "=IF({c}{net_sales_qty}>0,{c}{net_sales}/{c}{net_sales_qty},0)",
+     "rate", "ratio"),
+    ("STOCK", "", None, "section", None),
+    ("Closing Stock Qty (kg)", "closing_qty", "={c}{net_purchase_qty}-{c}{net_sales_qty}", "money", "sum"),
+    ("Closing Stock Value (at avg cost)", "closing_value", "={c}{closing_qty}*{c}{avg_cost_rate}", "money", "sum"),
+    ("PROFIT & LOSS", "", None, "section", None),
+    ("Cost of Goods Sold", "cogs", "={c}{net_purchase}-{c}{closing_value}", "money", "sum"),
+    ("Gross Profit", "gross_profit", "={c}{net_sales}-{c}{cogs}", "money_bold", "sum"),
+    ("Less: Post-bill Exp. (Purchase)", "post_exp_purchase", "post_exp_purchase", "money", "sum"),
+    ("Less: Post-bill Exp. (Sales)", "post_exp_sales", "post_exp_sales", "money", "sum"),
+    ("Net Profit / (Loss)", "net_profit", "={c}{gross_profit}-{c}{post_exp_purchase}-{c}{post_exp_sales}",
+     "money_bold", "sum"),
+    ("Net Margin %", "margin_pct", "=IF({c}{net_sales}<>0,{c}{net_profit}/{c}{net_sales},0)", "pct", "ratio"),
+    ("Remark", "remark", "remark", "note", None),
 ]
-_PNL_KEYS = ["", "purchase_qty", "purchase_value", "pre_bill_exp", "purchase_discount", "net_purchase",
-             "avg_cost_rate", "", "sales_qty", "sales_value", "sales_discount", "net_sales", "avg_sales_rate",
-             "", "closing_qty", "closing_value", "", "cogs", "gross_profit", "post_exp_purchase",
-             "post_exp_sales", "net_profit", "margin_pct", "remark"]
-_RATIO_TOTALS = {"avg_cost_rate": ("net_purchase", "purchase_qty"),
-                 "avg_sales_rate": ("net_sales", "sales_qty"),
+_PNL_KEYS = [line[1] for line in PNL_LINES]
+PNL_LINES = [(label, spec, style, mode) for label, _, spec, style, mode in PNL_LINES]
+_RATIO_TOTALS = {"avg_cost_rate": ("net_purchase", "net_purchase_qty"),
+                 "avg_sales_rate": ("net_sales", "net_sales_qty"),
                  "margin_pct": ("net_profit", "net_sales")}
 
 
@@ -163,7 +171,8 @@ def _write_pnl(wb, st: _Styles, pnl: pd.DataFrame, f: Filters) -> dict:
     note_r = top + len(PNL_LINES) + 2
     ws.merge_range(note_r, 0, note_r + 3, min(tcol, 8),
                    "How this is calculated: all amounts are before GST. Net Purchase Cost = purchase value + "
-                   "pre-bill expenses (Adhat, AMC, labour, transport, WH load, bags, other) - discount. "
+                   "pre-bill expenses (Adhat, AMC, labour, transport, WH load, bags, other) - discount - debit notes "
+                   "(value excl. GST + other charges); debit/credit note quantities reduce the kg bought/sold. "
                    "Unsold stock is valued at the average landed cost per kg and carried forward, so only the "
                    "cost of what was sold is charged. Post-bill expenses (storage, brokerage, sampling, "
                    "repacking, transport, sales loading) are charged in full. Quantities are in kg.", st.note)
@@ -265,10 +274,13 @@ def _write_bills(wb, st: _Styles, bills: pd.DataFrame, name: str, title: str):
     ws.autofilter(top, 0, max(tot - 1, top), len(headers) - 1)
 
 
-def _write_simple(wb, st: _Styles, df: pd.DataFrame, name: str, title: str, headers: dict, money=(), rate=()):
+def _write_simple(wb, st: _Styles, df: pd.DataFrame, name: str, title: str, headers: dict, money=(), rate=(),
+                  dates=(), pct=(), totals=(), subtitle: str | None = None):
     ws = wb.add_worksheet(name)
     ws.write(0, 0, title, st.title)
-    top = 2
+    if subtitle:
+        ws.write(1, 0, subtitle, st.sub)
+    top = 3 if subtitle else 2
     keys = list(headers)
     for j, k in enumerate(keys):
         ws.write(top, j, headers[k], st.head)
@@ -276,10 +288,30 @@ def _write_simple(wb, st: _Styles, df: pd.DataFrame, name: str, title: str, head
         rec = r._asdict()
         for j, k in enumerate(keys):
             v = _clean(rec.get(k))
-            fmt = st.money if k in money else st.rate if k in rate else st.text
-            ws.write(top + 1 + i, j, "" if v is None else v, fmt)
-    ws.set_column(0, len(keys) - 1, 18)
-    ws.set_column(len(keys) - 1, len(keys) - 1, 70 if name == "Data Checks" else 18)
+            row = top + 1 + i
+            if k in dates:
+                ws.write_datetime(row, j, v, st.date) if v else ws.write_blank(row, j, None, st.date)
+                continue
+            fmt = st.money if k in money else st.rate if k in rate else st.pct if k in pct else st.text
+            if v is None:
+                ws.write_blank(row, j, None, fmt)
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                ws.write_number(row, j, float(v), fmt)
+            else:
+                ws.write(row, j, str(v), fmt)
+    if totals and len(df):
+        tr = top + 1 + len(df)
+        ws.write(tr, 0, "TOTAL", st.total_label)
+        for j, k in enumerate(keys[1:], 1):
+            if k in totals:
+                col = xl_col_to_name(j)
+                ws.write_formula(tr, j, f"=SUM({col}{top + 2}:{col}{tr})", st.money_bold,
+                                 float(pd.to_numeric(df[k], errors="coerce").fillna(0).sum()))
+            else:
+                ws.write_blank(tr, j, None, st.total_label)
+    ws.set_column(0, len(keys) - 1, 16)
+    ws.set_column(len(keys) - 1, len(keys) - 1, 70 if name == "Data Checks" else 16)
+    ws.freeze_panes(top + 1, 1)
     if len(df):
         ws.autofilter(top, 0, top + len(df), len(keys) - 1)
 
@@ -315,21 +347,44 @@ def _write_summary(ws, st: _Styles, f: Filters, pnl_ref: dict, cred_ref: dict, d
     ws.set_column(1, 1, 22)
     r = 3 + len(kpis) + 1
     ws.merge_range(r, 0, r + 4, 3,
-                   "Sheets in this file: Product P&L (product-wise profit, excl. GST) | Creditors & Creditor Bills "
-                   "(what we owe suppliers, with ageing) | Debtors & Debtor Bills (what customers owe us, with ageing)"
-                   " | Open Orders (pending PO/SO) | Data Checks (rows in the Master Sheet that need attention).",
+                   "Sheets in this file: Product P&L (product-wise profit, excl. GST) | Stock Summary | Creditors & "
+                   "Creditor Bills (what we owe suppliers, with ageing) | Debtors & Debtor Bills (what customers owe "
+                   "us, with ageing) | Purchase Orders & Sales Orders (every contract) | Open Orders | Debit Notes & "
+                   "Credit Notes | Bill-wise Margin (sales linked to purchase bills) | Data Checks.",
                    st.note)
 
 
-def build_workbook(pnl: pd.DataFrame, cred: Ledger, debt: Ledger, orders: pd.DataFrame,
-                   checks: pd.DataFrame, f: Filters) -> bytes:
+ORDER_HEADERS = {"contract_no": "Contract No", "date": "Date", "party": "Party", "broker": "Broker",
+                 "product": "Product", "qty_mt": "Qty (MT)", "cancel_qty": "Cancelled (MT)",
+                 "recd_qty": "{done} (MT)", "bal_qty_mt": "Balance (MT)", "rate": "Rate / kg",
+                 "order_value": "Order Value", "amount": "Balance Value", "done_pct": "{done} %",
+                 "status": "Status", "delivery_date": "Delivery Date", "delivery_place": "Delivery Place",
+                 "bill_no": "Invoices", "days_open": "Days Open"}
+NOTE_HEADERS = {"note_no": "Note No", "date": "Date", "party": "Party", "bill_no": "Bill No",
+                "product": "Product", "qty": "Qty (kg)", "rate": "Rate", "taxable": "Taxable Value",
+                "gst_pct": "GST %", "gst": "GST", "other": "Other Charges", "total": "Total", "reason": "Reason"}
+
+
+def build_workbook(rs) -> bytes:
     import xlsxwriter
 
+    pnl, cred, debt, f = rs.pnl, rs.creditors, rs.debtors, rs.filters
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf, {"in_memory": True, "nan_inf_to_errors": True})
     st = _Styles(wb)
     summary_ws = wb.add_worksheet("Summary")
     pnl_ref = _write_pnl(wb, st, pnl, f)
+    _write_simple(wb, st, rs.stock, "Stock Summary", "Stock Summary (quantities in kg)",
+                  {"product": "Product", "purchase_qty": "Purchased", "purchase_return_qty": "Returned to Suppliers",
+                   "sales_qty": "Sold", "sales_return_qty": "Returned by Customers", "closing_qty": "Stock in Hand",
+                   "avg_cost_rate": "Avg Cost / kg", "closing_value": "Stock Value",
+                   "pending_po_qty": "To Receive (open PO)", "pending_so_qty": "To Deliver (open SO)",
+                   "projected_qty": "Stock after Orders"},
+                  money={"purchase_qty", "purchase_return_qty", "sales_qty", "sales_return_qty", "closing_qty",
+                         "closing_value", "pending_po_qty", "pending_so_qty", "projected_qty"}, rate={"avg_cost_rate"},
+                  totals={"purchase_qty", "purchase_return_qty", "sales_qty", "sales_return_qty", "closing_qty",
+                          "closing_value", "pending_po_qty", "pending_so_qty", "projected_qty"},
+                  subtitle=_filters_text(f))
     cred_ref = _write_ledger(wb, st, cred, "Creditors", "Creditors (Payables) - Purchase Parties",
                              {"billed": "Payable Amount", "paid": "Paid Amount", "note": "Debit Note / Other Ded."}, f)
     _write_bills(wb, st, cred.bills, "Creditor Bills", "Outstanding Purchase Bills (Creditors)")
@@ -337,11 +392,28 @@ def build_workbook(pnl: pd.DataFrame, cred: Ledger, debt: Ledger, orders: pd.Dat
                              {"billed": "Receivable Amount", "paid": "Received Amount",
                               "note": "Credit Note / Other Ded."}, f)
     _write_bills(wb, st, debt.bills, "Debtor Bills", "Outstanding Sales Bills (Debtors)")
-    _write_simple(wb, st, orders, "Open Orders", "Pending Purchase / Sales Orders",
+    for df, name, done in ((rs.po_detail, "Purchase Orders", "Received"), (rs.so_detail, "Sales Orders", "Delivered")):
+        _write_simple(wb, st, df, name, f"{name} - contract details",
+                      {k: v.format(done=done) for k, v in ORDER_HEADERS.items()},
+                      money={"qty_mt", "cancel_qty", "recd_qty", "bal_qty_mt", "order_value", "amount", "days_open"},
+                      rate={"rate"}, pct={"done_pct"}, dates={"date", "delivery_date"},
+                      totals={"qty_mt", "cancel_qty", "recd_qty", "bal_qty_mt", "order_value", "amount"})
+    _write_simple(wb, st, rs.orders, "Open Orders", "Pending Purchase / Sales Orders by product",
                   {"order_type": "Order Type", "product": "Product", "contracts": "Contracts",
                    "bal_qty_kg": "Balance Qty (kg)", "amount": "Amount", "avg_rate": "Avg Rate per kg"},
                   money={"contracts", "bal_qty_kg", "amount"}, rate={"avg_rate"})
-    _write_simple(wb, st, checks, "Data Checks", "Rows in the Master Sheet that need attention",
+    for df, name in ((rs.debit_notes, "Debit Notes"), (rs.credit_notes, "Credit Notes")):
+        _write_simple(wb, st, df, name, f"{name} entered from the app",
+                      NOTE_HEADERS, money={"qty", "taxable", "gst", "other", "total"}, rate={"rate", "gst_pct"},
+                      dates={"date"}, totals={"qty", "taxable", "gst", "other", "total"})
+    _write_simple(wb, st, rs.margins, "Bill-wise Margin", "Margin on sales bills linked to a purchase bill",
+                  {"sales_bill": "Sales Bill", "sales_date": "Date", "customer": "Customer", "product": "Product",
+                   "qty": "Qty (kg)", "sale_rate": "Sale Rate / kg", "sales_value": "Sales Value",
+                   "purchase_bill": "Purchase Bill", "supplier": "Supplier", "cost_rate": "Landed Cost / kg",
+                   "cost": "Cost", "margin": "Margin", "margin_per_kg": "Margin / kg", "margin_pct": "Margin %"},
+                  money={"qty", "sales_value", "cost", "margin"}, rate={"sale_rate", "cost_rate", "margin_per_kg"},
+                  pct={"margin_pct"}, dates={"sales_date"}, totals={"qty", "sales_value", "cost", "margin"})
+    _write_simple(wb, st, rs.checks, "Data Checks", "Rows in the Master Sheet that need attention",
                   {"sheet": "Sheet", "row": "Row No.", "party": "Party", "issue": "Issue"})
 
     def tot(df, col):

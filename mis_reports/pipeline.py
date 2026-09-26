@@ -23,9 +23,15 @@ class ReportSet:
     debtors: R.Ledger
     orders: pd.DataFrame
     checks: pd.DataFrame
+    stock: pd.DataFrame
+    po_detail: pd.DataFrame
+    so_detail: pd.DataFrame
+    margins: pd.DataFrame
+    debit_notes: pd.DataFrame
+    credit_notes: pd.DataFrame
 
     def to_excel(self) -> bytes:
-        return build_workbook(self.pnl, self.creditors, self.debtors, self.orders, self.checks, self.filters)
+        return build_workbook(self)
 
 
 def load_aliases(path: Path = ALIAS_FILE) -> dict:
@@ -52,5 +58,8 @@ def run_reports(source, filters: R.Filters | None = None, data: MasterData | Non
     if not f.aliases:
         f.aliases = load_aliases()
     data = data or load_master(source)
-    return ReportSet(data, f, R.product_pnl(data, f), R.creditors(data, f), R.debtors(data, f),
-                     R.open_orders(data, f), R.data_checks(data, f))
+    pnl = R.product_pnl(data, f)
+    return ReportSet(data, f, pnl, R.creditors(data, f), R.debtors(data, f),
+                     R.open_orders(data, f), R.data_checks(data, f), R.stock_summary(data, f, pnl),
+                     R.orders_detail(data, "PO", f), R.orders_detail(data, "SO", f), R.bill_margins(data, f),
+                     R.notes_in_scope(data, "Purchase", f), R.notes_in_scope(data, "Sales", f))

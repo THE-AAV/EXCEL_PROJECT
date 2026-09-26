@@ -61,11 +61,32 @@ def _in_period(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- P&L
+def notes_in_scope(data: MasterData, kind: str, f: Filters) -> pd.DataFrame:
+    """Debit notes (kind 'Purchase') or credit notes (kind 'Sales') from the app's registers, with the
+    bill's product / type / company, filtered like the bills and dated by the note date."""
+    notes = data.debit_notes if kind == "Purchase" else data.credit_notes
+    bills = data.purchase if kind == "Purchase" else data.sales
+    cols = ["note_no", "date", "party", "bill_no", "bill_row", "qty", "rate", "taxable", "gst_pct", "gst",
+            "other", "total", "reason"]
+    if notes is None or notes.empty:
+        return pd.DataFrame(columns=cols + ["product", "txn_date"])
+    ctx = bills[["source_row", "commodity", "type", "sub_type", "company", "bill_date", "stock_date"]]
+    n = notes[cols].merge(ctx, left_on="bill_row", right_on="source_row", how="left")
+    n["commodity"] = n["commodity"].fillna(notes["product"].reindex(n.index))
+    n = apply_common_filters(n, f)
+    n["txn_date"] = n["date"].fillna(n["txn_date"])
+    for c in ("qty", "taxable", "other", "gst", "total"):
+        n[c] = pd.to_numeric(n[c], errors="coerce").fillna(0)
+    return _in_period(n, f)
+
+
 def product_pnl(data: MasterData, f: Filters) -> pd.DataFrame:
     """One row per product. Cost of goods sold uses the average landed purchase rate,
-    so unsold stock is carried as closing stock rather than charged to the P&L."""
+    so unsold stock is carried as closing stock rather than charged to the P&L.
+    Debit notes reduce purchases (quantity and value); credit notes reduce sales."""
     pur = _in_period(apply_common_filters(data.purchase, f), f)
     sal = _in_period(apply_common_filters(data.sales, f), f)
+    dn, cn = notes_in_scope(data, "Purchase", f), notes_in_scope(data, "Sales", f)
 
     p = pur.groupby("product").agg(
         purchase_qty=("qty", "sum"), purchase_value=("amount", "sum"),
@@ -75,17 +96,22 @@ def product_pnl(data: MasterData, f: Filters) -> pd.DataFrame:
         sales_qty=("qty", "sum"), sales_value=("amount", "sum"),
         sales_discount=("discount", "sum"), post_exp_sales=("post_exp", "sum"),
         sales_bills=("party", "size"))
-    pnl = p.join(s, how="outer").fillna(0)
+    d = dn.assign(value=dn["taxable"] + dn["other"]).groupby("product").agg(
+        purchase_return_qty=("qty", "sum"), purchase_returns=("value", "sum"))
+    c = cn.assign(value=cn["taxable"] + cn["other"]).groupby("product").agg(
+        sales_return_qty=("qty", "sum"), sales_returns=("value", "sum"))
+    pnl = p.join(s, how="outer").join(d, how="outer").join(c, how="outer").fillna(0)
     if pnl.empty:
         return pnl.reset_index()
 
-    pnl["net_purchase"] = pnl["purchase_value"] + pnl["pre_bill_exp"] - pnl["purchase_discount"]
-    pnl["avg_cost_rate"] = np.where(pnl["purchase_qty"] > 0,
-                                    pnl["net_purchase"] / pnl["purchase_qty"].where(pnl["purchase_qty"] > 0), 0)
-    pnl["net_sales"] = pnl["sales_value"] - pnl["sales_discount"]
-    pnl["avg_sales_rate"] = np.where(pnl["sales_qty"] > 0,
-                                     pnl["net_sales"] / pnl["sales_qty"].where(pnl["sales_qty"] > 0), 0)
-    pnl["closing_qty"] = pnl["purchase_qty"] - pnl["sales_qty"]
+    pnl["net_purchase_qty"] = pnl["purchase_qty"] - pnl["purchase_return_qty"]
+    pnl["net_purchase"] = (pnl["purchase_value"] + pnl["pre_bill_exp"] - pnl["purchase_discount"]
+                           - pnl["purchase_returns"])
+    pnl["avg_cost_rate"] = _ratio(pnl["net_purchase"], pnl["net_purchase_qty"])
+    pnl["net_sales_qty"] = pnl["sales_qty"] - pnl["sales_return_qty"]
+    pnl["net_sales"] = pnl["sales_value"] - pnl["sales_discount"] - pnl["sales_returns"]
+    pnl["avg_sales_rate"] = _ratio(pnl["net_sales"], pnl["net_sales_qty"])
+    pnl["closing_qty"] = pnl["net_purchase_qty"] - pnl["net_sales_qty"]
     pnl["closing_value"] = pnl["closing_qty"] * pnl["avg_cost_rate"]
     pnl["cogs"] = pnl["net_purchase"] - pnl["closing_value"]
     pnl["gross_profit"] = pnl["net_sales"] - pnl["cogs"]
@@ -95,7 +121,7 @@ def product_pnl(data: MasterData, f: Filters) -> pd.DataFrame:
                                  pnl["net_profit"] / pnl["net_sales"].where(pnl["net_sales"] != 0), 0)
 
     def remark(r):
-        if r.purchase_qty == 0 and r.sales_qty > 0:
+        if r.net_purchase_qty <= 0 and r.net_sales_qty > 0:
             return "Sales without purchase in period - cost unknown"
         if r.closing_qty < 0:
             return "Sold more than purchased in period - check opening stock"
@@ -104,6 +130,86 @@ def product_pnl(data: MasterData, f: Filters) -> pd.DataFrame:
         return ""
     pnl["remark"] = [remark(r) for r in pnl.itertuples()]
     return pnl.reset_index().sort_values("net_sales", ascending=False).reset_index(drop=True)
+
+
+def _ratio(num: pd.Series, den: pd.Series) -> np.ndarray:
+    return np.where(den > 0, num / den.where(den > 0), 0)
+
+
+def stock_summary(data: MasterData, f: Filters, pnl: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per product: purchased, returned to suppliers, sold, returned by customers, stock in hand and its
+    value, plus what is still to come in (open purchase orders) and go out (open sales orders)."""
+    pnl = product_pnl(data, f) if pnl is None else pnl
+    cols = ["product", "purchase_qty", "purchase_return_qty", "sales_qty", "sales_return_qty", "closing_qty",
+            "avg_cost_rate", "closing_value"]
+    st = pnl[cols].copy() if len(pnl) else pd.DataFrame(columns=cols)
+    orders = open_orders(data, f)
+    for label, col in (("Purchase Order", "pending_po_qty"), ("Sales Order", "pending_so_qty")):
+        o = orders[orders["order_type"] == label].set_index("product")["bal_qty_kg"] if len(orders) else pd.Series()
+        st = st.merge(o.rename(col), left_on="product", right_index=True, how="outer")
+    st["product"] = st["product"].fillna("")
+    st = st.fillna(0)
+    st["projected_qty"] = st["closing_qty"] + st["pending_po_qty"] - st["pending_so_qty"]
+    return st.sort_values("closing_value", ascending=False).reset_index(drop=True)
+
+
+def orders_detail(data: MasterData, kind: str, f: Filters) -> pd.DataFrame:
+    """Every purchase ('PO') or sales ('SO') contract with what has been received / delivered."""
+    df = data.po if kind == "PO" else data.so
+    cols = ["contract_no", "date", "party", "broker", "product", "qty_mt", "cancel_qty", "recd_qty", "bal_qty_mt",
+            "rate", "order_value", "amount", "done_pct", "status", "delivery_date", "delivery_place", "bill_no",
+            "days_open", "source_row"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+    d = df.copy()
+    d["product"] = d["commodity"].map(lambda v: product_name(v, f.aliases))
+    for col, wanted in (("product", f.products), ("company", f.companies)):
+        if wanted and col in d:
+            d = d[d[col].isin(wanted)]
+    for c in ("qty_mt", "cancel_qty", "recd_qty", "bal_qty_mt", "rate", "amount"):
+        d[c] = pd.to_numeric(d.get(c), errors="coerce").fillna(0)
+    d["order_value"] = (d["qty_mt"] - d["cancel_qty"]) * 1000 * d["rate"]
+    d["done_pct"] = _ratio(d["recd_qty"], d["qty_mt"] - d["cancel_qty"])
+    as_of = pd.Timestamp(f.as_of or date.today())
+    is_open = d["status"].fillna("").str.lower() != "closed"
+    d["days_open"] = np.where(is_open & d["date"].notna(), (as_of - d["date"]).dt.days, np.nan)
+    for c in cols:
+        if c not in d:
+            d[c] = np.nan
+    return d[cols].reset_index(drop=True)
+
+
+def bill_margins(data: MasterData, f: Filters) -> pd.DataFrame:
+    """Margin on sales bills that were linked to the purchase bill the goods came from."""
+    cols = ["sales_bill", "sales_date", "customer", "product", "qty", "sale_rate", "sales_value", "purchase_bill",
+            "supplier", "cost_rate", "cost", "margin", "margin_per_kg", "margin_pct"]
+    sal = _in_period(apply_common_filters(data.sales, f), f)
+    sal = sal[sal["purchase_inv"].notna() & (sal["purchase_inv"].astype(str).str.strip() != "")]
+    if sal.empty:
+        return pd.DataFrame(columns=cols)
+    pur = data.purchase.copy()
+    pur["product"] = pur["commodity"].map(lambda v: product_name(v, f.aliases))
+    pur["landed"] = pur["amount"].fillna(0) + pur["pre_exp"].fillna(0) - pur["discount"].fillna(0)
+    pur["bill_key"] = pur["bill_no"].astype(str).str.strip().str.lower()
+    rows = []
+    for r in sal.itertuples():
+        bills = [b.strip().lower() for b in str(r.purchase_inv).split(",") if b.strip()]
+        match = pur[pur["bill_key"].isin(bills)]
+        if (match["product"] == r.product).any():
+            match = match[match["product"] == r.product]
+        qty_p = match["qty"].sum()
+        cost_rate = match["landed"].sum() / qty_p if qty_p else np.nan
+        value = (r.amount or 0) - (0 if pd.isna(r.discount) else r.discount)
+        cost = r.qty * cost_rate if pd.notna(cost_rate) and pd.notna(r.qty) else np.nan
+        margin = value - cost if pd.notna(cost) else np.nan
+        rows.append({"sales_bill": r.bill_no, "sales_date": r.txn_date, "customer": r.party, "product": r.product,
+                     "qty": r.qty, "sale_rate": value / r.qty if r.qty else np.nan, "sales_value": value,
+                     "purchase_bill": r.purchase_inv,
+                     "supplier": ", ".join(sorted(set(match["party"].dropna()))) or "not found",
+                     "cost_rate": cost_rate, "cost": cost, "margin": margin,
+                     "margin_per_kg": margin / r.qty if r.qty and pd.notna(margin) else np.nan,
+                     "margin_pct": margin / value if value and pd.notna(margin) else np.nan})
+    return pd.DataFrame(rows, columns=cols)
 
 
 # --------------------------------------------------------------------------- ledgers

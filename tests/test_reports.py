@@ -118,8 +118,9 @@ def test_debtors_ignore_payments_after_as_of_date():
 def test_excel_export_has_all_sheets():
     src = make_master([pur("A", "Urad", 1000, 90, D1)], [sale("X", "Urad", 400, 100, D2)])
     wb = openpyxl.load_workbook(io.BytesIO(run_reports(src, Filters(as_of=AS_OF)).to_excel()))
-    assert wb.sheetnames == ["Summary", "Product P&L", "Creditors", "Creditor Bills", "Debtors",
-                             "Debtor Bills", "Open Orders", "Data Checks"]
+    assert wb.sheetnames == ["Summary", "Product P&L", "Stock Summary", "Creditors", "Creditor Bills", "Debtors",
+                             "Debtor Bills", "Purchase Orders", "Sales Orders", "Open Orders", "Debit Notes",
+                             "Credit Notes", "Bill-wise Margin", "Data Checks"]
     assert wb["Product P&L"]["B4"].value == "URAD"
 
 

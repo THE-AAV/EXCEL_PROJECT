@@ -11,7 +11,8 @@ import pandas as pd
 import streamlit as st
 
 from mis_reports import reports as R
-from mis_reports.entries import EXPENSE_FIELDS, EntryError, MasterFile, restore_latest_backup
+from mis_reports.entries import (EXPENSE_FIELDS, NOTE_REASONS, EntryError, MasterFile, split_by_value, next_number,
+                                 restore_latest_backup)
 from mis_reports.xlsx_edit import FileLockedError
 
 from .common import inr, show_table
@@ -170,12 +171,30 @@ def render(data, master: MasterFile, aliases: dict):
 
 
 # --------------------------------------------------------------------------- ① / ⑥ orders
+def _number_field(f: str, label: str, existing, first="1"):
+    """Automatic number (next in the series) or one the user types. Returns None for automatic."""
+    auto_no = next_number(list(existing), first)
+    c = st.columns([2, 3])
+    mode = c[0].radio(f"{label} numbering", ["Automatic", "Enter my own"], horizontal=True,
+                      key=_key(f, "nummode"))
+    if mode == "Automatic":
+        c[1].text_input(label, value=str(auto_no), disabled=True, key=_key(f, "autono"),
+                        help="The next number in the series is given when you save.")
+        return None, True
+    own = c[1].text_input(f"{label} *", key=_key(f, "ownno"), placeholder=f"e.g. {auto_no}")
+    taken = bool(own.strip()) and own.strip().lower() in {str(v).strip().lower() for v in existing if pd.notna(v)}
+    if taken:
+        c[1].error(f"{own} is already used.")
+    return own.strip() or None, bool(own.strip()) and not taken
+
+
 def _order_form(kind: str, data, master: MasterFile):
     side = "Purchase" if kind == "PO" else "Sales"
     df = data.po if kind == "PO" else data.so
     bills = data.purchase if kind == "PO" else data.sales
     f = f"order_{kind}"
     st.subheader(f"New {side} Order")
+    contract_no, number_ok = _number_field(f, "Contract No.", df["contract_no"] if len(df) else [])
     c = st.columns(3)
     with c[0]:
         party = _pick("Party", _options(bills["party"], df.get("party")), _key(f, "party"), required=True)
@@ -192,24 +211,24 @@ def _order_form(kind: str, data, master: MasterFile):
     rate = c[2].number_input("Rate (₹ per kg) *", min_value=0.0, step=0.25, key=_key(f, "rate"))
     c = st.columns(3)
     delivery = c[0].date_input("Delivery date", None, key=_key(f, "delivery"), format="DD/MM/YYYY")
+    place = c[1].text_input("Delivery place", key=_key(f, "place"))
+    packing = c[2].text_input("Packing", key=_key(f, "packing"))
     with st.expander("More details (optional)"):
         c = st.columns(3)
-        place = c[0].text_input("Delivery place", key=_key(f, "place"))
-        packing = c[1].text_input("Packing", key=_key(f, "packing"))
-        with c[2]:
+        with c[0]:
             company = _pick("Company", _options(bills["company"]), _key(f, "company"),
                             default=prev.get("company") or (_options(bills["company"]) or [None])[0])
-        c = st.columns(3)
-        with c[0]:
+        with c[1]:
             warehouse = _pick("Warehouse", _options(bills["warehouse"]), _key(f, "wh"))
-        branch = c[1].text_input("Branch", value=prev.get("branch") or "", key=_key(f, "branch"))
+        branch = c[2].text_input("Branch", value=prev.get("branch") or "", key=_key(f, f"branch_{party}"))
     st.markdown(f"<div class='preview'>Order value: <b>₹ {inr(qty * 1000 * rate)}</b> "
                 f"({qty:g} MT × 1000 × ₹{rate:g}/kg)</div>", unsafe_allow_html=True)
-    if st.button(f"💾 Save {side} Order", type="primary", key=_key(f, "save")):
+    if st.button(f"💾 Save {side} Order", type="primary", key=_key(f, "save"), disabled=not number_ok):
         fields = {"date": when, "party": party, "broker": broker, "commodity": product, "qty_mt": qty,
                   "rate": rate, "delivery_date": delivery, "delivery_place": place, "packing": packing,
                   "company": company, "warehouse": warehouse, "branch": branch}
-        _save(f, lambda: master.add_order(kind, fields), f"✅ {side} Order saved for {party}.")
+        _save(f, lambda: master.add_order(kind, fields, contract_no=contract_no),
+              f"✅ {side} Order {contract_no or ''} saved for {party}.")
 
     st.markdown(f"#### Open {side.lower()} orders")
     open_ = _open_orders(df)
@@ -223,43 +242,112 @@ def _order_form(kind: str, data, master: MasterFile):
 
 
 # --------------------------------------------------------------------------- ② / ⑦ invoices
+PRE_LABELS = {"adhat": "Adhat", "amc": "AMC", "labour": "Labour", "transport_pre": "Transportation",
+              "wh_load": "WH Load", "bags": "Bags", "other_pre": "Other", "discount": "Discount (less)"}
+
+
+def _purchase_bill_label(r) -> str:
+    d = r.bill_date.strftime("%d-%b-%Y") if pd.notna(r.bill_date) else "no date"
+    return f"Bill {r.bill_no or '-'} · {r.party} · {d} · {r.commodity} {r.qty:,.0f} kg @ ₹{r.rate:g}"
+
+
 def _invoice_form(kind: str, data, master: MasterFile):
     purchase = kind == "Purchase"
     df = data.purchase if purchase else data.sales
-    orders = _open_orders(data.po if purchase else data.so)
+    all_orders = _open_orders(data.po if purchase else data.so)
     f = f"inv_{kind}"
     st.subheader(f"New {kind} Invoice")
+    st.caption("One bill can have several items - each item can be against a different "
+               f"{'purchase' if purchase else 'sales'} contract." +
+               ("" if purchase else " An item can also be linked to the purchase bill the goods came from."))
 
-    link_opts = ["No order (direct invoice)"] + [_order_label(r) for r in orders.itertuples()]
-    link = st.selectbox(f"Against {'purchase' if purchase else 'sales'} order", link_opts, key=_key(f, "link"))
-    order = orders.iloc[link_opts.index(link) - 1] if link != link_opts[0] else None
-    lk = f"{f}_{link_opts.index(link)}"   # widget keys change with the order so defaults refill
-
+    # ---- bill header
     c = st.columns(3)
     with c[0]:
-        party = _pick("Party", _options(df["party"]), _key(lk, "party"), required=True,
-                      default=order["party"] if order is not None else None)
+        party = _pick("Party", _options(df["party"], all_orders.get("party")), _key(f, "party"), required=True)
     prev = _last_for(df, "party", party)
-    pk = f"{lk}_{party}"   # party-dependent defaults refill when the party changes
-    bill_no = c[1].text_input("Bill No." + (" " if purchase else " (our invoice no.)"), key=_key(lk, "bill_no"))
-    bill_date = c[2].date_input("Bill date *", date.today(), key=_key(lk, "bill_date"), format="DD/MM/YYYY")
-
+    pk = f"{f}_{party}"   # party-dependent defaults refill when the party changes
+    if purchase:
+        bill_no = c[1].text_input("Supplier's bill No.", key=_key(f, "bill_no"))
+    else:
+        bill_no = c[1].text_input("Our invoice No.", value=str(next_number(list(df["bill_no"].dropna()), "1")),
+                                  key=_key(f, "bill_no"), help="Next number in the series - change it if needed.")
+    bill_date = c[2].date_input("Bill date *", date.today(), key=_key(f, "bill_date"), format="DD/MM/YYYY")
     c = st.columns(3)
-    with c[0]:
-        product = _pick("Product", _options(df["commodity"]), _key(lk, "product"), required=True,
-                        default=_match(order["commodity"], df["commodity"]) if order is not None else None)
-    qty = c[1].number_input("Weight (kg) *", min_value=0.0, step=10.0, key=_key(lk, "qty"),
-                            value=float(order["bal_qty_mt"] * 1000) if order is not None else 0.0)
-    rate = c[2].number_input("Rate (₹ per kg) *", min_value=0.0, step=0.25, key=_key(lk, "rate"),
-                             value=float(order["rate"]) if order is not None else 0.0)
-    c = st.columns(3)
-    gst = c[0].number_input("GST %", min_value=0.0, max_value=28.0, step=0.5, key=_key(pk, "gst"),
-                            value=5.0 if (prev.get("type") or "Local") != "Import" else 0.0)
-    stock_date = c[1].date_input("WH in date" if purchase else "Delivery date", bill_date,
-                                 key=_key(lk, "stock_date"), format="DD/MM/YYYY")
-    truck = c[2].text_input("Truck No.", key=_key(lk, "truck"))
+    stock_date = c[0].date_input("WH in date" if purchase else "Delivery date", bill_date,
+                                 key=_key(f, "stock_date"), format="DD/MM/YYYY")
+    truck = c[1].text_input("Truck No.", key=_key(f, "truck"))
+    gst_default = 5.0 if (prev.get("type") or "Local") != "Import" else 0.0
+    gst_all = c[2].number_input("GST % (for all items)", min_value=0.0, max_value=28.0, step=0.5,
+                                value=gst_default, key=_key(pk, "gst"))
 
-    with st.expander("More details (filled from this party's last bill - change if needed)"):
+    tab_names = ["🧾 Items"] + (["💰 Pre-bill expenses"] if purchase else []) + ["📋 More details"]
+    tabs = st.tabs(tab_names)
+
+    # ---- items
+    orders = all_orders
+    if party:
+        mine = all_orders[all_orders["party"].astype(str).str.lower() == str(party).lower()]
+        orders = mine if not mine.empty else all_orders
+    order_labels = ["No contract"] + [_order_label(r) for r in orders.itertuples()]
+    ids_key = _key(f, "ids")
+    ids = st.session_state.setdefault(ids_key, [0])
+    lines = []
+    with tabs[0]:
+        for pos, i in enumerate(ids):
+            with st.container(border=True):
+                top = st.columns([6, 1])
+                top[0].markdown(f"**Item {pos + 1}**")
+                if len(ids) > 1 and top[1].button("🗑 Remove", key=_key(f, f"rm_{i}")):
+                    ids.remove(i)
+                    st.rerun()
+                link = st.selectbox("Against contract", order_labels, key=_key(f, f"order_{i}"))
+                order = orders.iloc[order_labels.index(link) - 1] if link != order_labels[0] else None
+                lk = f"{f}_{i}_{order_labels.index(link)}"   # refill defaults when the contract changes
+                c = st.columns([3, 2, 2])
+                with c[0]:
+                    product = _pick("Product", _options(df["commodity"]), _key(lk, "product"), required=True,
+                                    default=_match(order["commodity"], df["commodity"]) if order is not None else None)
+                qty = c[1].number_input("Weight (kg) *", min_value=0.0, step=10.0, key=_key(lk, "qty"),
+                                        value=float(order["bal_qty_mt"] * 1000) if order is not None else 0.0)
+                rate = c[2].number_input("Rate (₹ per kg) *", min_value=0.0, step=0.25, key=_key(lk, "rate"),
+                                         value=float(order["rate"]) if order is not None else 0.0)
+                link_row = None
+                if not purchase:
+                    pb = data.purchase[data.purchase["qty"].fillna(0) > 0]
+                    if product:
+                        same = pb[pb["commodity"].map(R.product_name) == R.product_name(product)]
+                        pb = same if not same.empty else pb
+                    pb = pb.sort_values("bill_date", ascending=False, na_position="last").head(300)
+                    plabels = ["Not linked"] + [_purchase_bill_label(r) for r in pb.itertuples()]
+                    pl = st.selectbox("Linked purchase bill (optional)", plabels, key=_key(f, f"plink_{i}_{product}"),
+                                      help="The purchase bill these goods came from. Used for the bill-wise "
+                                           "margin report and noted on both bills.")
+                    if pl != plabels[0]:
+                        link_row = int(pb.iloc[plabels.index(pl) - 1]["source_row"])
+                lines.append({"commodity": product, "qty": qty, "rate": rate, "gst_pct": gst_all,
+                              "order_row": int(order["source_row"]) if order is not None else None,
+                              "contract": order["contract_no"] if order is not None else "",
+                              "link_row": link_row,
+                              "hsn": _last_for(df, "commodity", product).get("hsn")})
+        if st.button("➕ Add another item", key=_key(f, "add")):
+            ids.append(max(ids) + 1)
+            st.rerun()
+
+    # ---- pre-bill expenses (purchase)
+    expenses = {}
+    if purchase:
+        with tabs[1]:
+            st.caption("Enter the totals for this bill. They are split over the items in proportion to their "
+                       "value and added to the item cost (the discount is taken off).")
+            c = st.columns(4)
+            for n, (fld, label) in enumerate(PRE_LABELS.items()):
+                v = c[n % 4].number_input(label, min_value=0.0, step=100.0, key=_key(f, f"pre_{fld}"))
+                if v:
+                    expenses[fld] = v
+
+    # ---- more details
+    with tabs[-1]:
         c = st.columns(3)
         with c[0]:
             company = _pick("Company", _options(df["company"]), _key(pk, "company"),
@@ -271,42 +359,45 @@ def _invoice_form(kind: str, data, master: MasterFile):
             sub = _pick("Sub Type", _options(df["sub_type"]), _key(pk, "sub"), default=prev.get("sub_type"))
         c = st.columns(3)
         with c[0]:
-            broker = _pick("Broker", _options(df["broker"]), _key(pk, "broker"),
-                           default=(order["broker"] if order is not None and pd.notna(order["broker"]) else None)
-                           or prev.get("broker"))
+            broker = _pick("Broker", _options(df["broker"]), _key(pk, "broker"), default=prev.get("broker"))
         with c[1]:
             warehouse = _pick("Warehouse", _options(df["warehouse"]), _key(pk, "wh"), default=prev.get("warehouse"))
         gstin = c[2].text_input("Party GSTIN", value=prev.get("gstin") or "", key=_key(pk, "gstin"))
-        c = st.columns(3)
-        branch = c[0].text_input("Branch", value=prev.get("branch") or "", key=_key(pk, "branch"))
-        hsn = c[1].text_input("HSN code", value=str(_last_for(df, "commodity", product).get("hsn") or ""),
-                              key=_key(lk, f"hsn_{product}"))
-        bags = c[2].number_input("No. of bags", min_value=0, step=1, key=_key(lk, "bags"))
-        bill_weight = st.number_input("Bill weight (kg) if different from weight", min_value=0.0, step=10.0,
-                                      key=_key(lk, "bill_weight"))
+        branch = st.text_input("Branch", value=prev.get("branch") or "", key=_key(pk, "branch"))
 
-    amount = qty * rate
-    tax = amount * gst / 100
-    st.markdown(f"<div class='preview'>Amount before GST <b>₹ {inr(amount, 2)}</b> &nbsp;+&nbsp; GST {gst:g}% "
-                f"<b>₹ {inr(tax, 2)}</b> &nbsp;=&nbsp; Bill amount <b>₹ {inr(amount + tax, 2)}</b></div>",
-                unsafe_allow_html=True)
+    # ---- preview
+    values = [l["qty"] * l["rate"] for l in lines]
+    shares = {k: split_by_value(v, values) for k, v in expenses.items()} if sum(values) else {}
+    prev_rows = []
+    for n, l in enumerate(lines):
+        amount = values[n]
+        extra = sum(v[n] for k, v in shares.items() if k != "discount") - (shares.get("discount") or [0] * len(lines))[n]
+        tax_base = amount + extra if purchase else amount
+        gst = tax_base * l["gst_pct"] / 100
+        prev_rows.append({"Item": n + 1, "Product": l["commodity"] or "", "Contract": l["contract"],
+                          "Weight (kg)": l["qty"], "Rate": l["rate"], "Amount": amount,
+                          "Pre-bill exp. (net)": extra, "GST": gst, "Bill amount": amount + gst})
+    pv = pd.DataFrame(prev_rows)
+    if len(pv):
+        st.markdown("**Bill preview**")
+        show_table(pv, money=["Weight (kg)", "Amount", "Pre-bill exp. (net)", "GST", "Bill amount"], rate=["Rate"])
+        st.markdown(f"<div class='preview'>Total amount <b>₹ {inr(pv['Amount'].sum(), 2)}</b> &nbsp;+&nbsp; GST "
+                    f"<b>₹ {inr(pv['GST'].sum(), 2)}</b> &nbsp;=&nbsp; Bill total <b>₹ {inr(pv['Bill amount'].sum(), 2)}"
+                    "</b></div>", unsafe_allow_html=True)
 
     dup = bool(bill_no) and not df[(df["party"].astype(str).str.lower() == str(party or "").lower())
                                    & (df["bill_no"].astype(str) == str(bill_no))].empty
     ok_dup = True
     if dup:
         ok_dup = st.checkbox(f"⚠️ Bill {bill_no} already exists for {party}. Tick to save it again anyway.",
-                             key=_key(lk, "dup"))
-    if st.button(f"💾 Save {kind} Invoice", type="primary", key=_key(lk, "save"), disabled=not ok_dup):
-        fields = {"company": company, "type": typ, "sub_type": sub, "warehouse": warehouse, "broker": broker,
+                             key=_key(f, "dup"))
+    if st.button(f"💾 Save {kind} Invoice", type="primary", key=_key(f, "save"), disabled=not ok_dup):
+        header = {"company": company, "type": typ, "sub_type": sub, "warehouse": warehouse, "broker": broker,
                   "party": party, "gstin": gstin, "branch": branch, "bill_no": bill_no, "bill_date": bill_date,
-                  "stock_date": stock_date, "truck_no": truck, "commodity": product, "hsn": hsn,
-                  "no_of_bags": bags or None, "qty": qty, "rate": rate,
-                  "bill_weight": bill_weight or qty}
-        row = int(order["source_row"]) if order is not None else None
-        _save(f, lambda: master.add_invoice(kind, fields, gst_pct=gst, order_row=row),
-              f"✅ {kind} Invoice {bill_no or ''} saved for {party}"
-              + (f" and order contract {order['contract_no']} updated." if order is not None else "."))
+                  "stock_date": stock_date, "truck_no": truck}
+        items = [{k: v for k, v in l.items() if k != "contract"} for l in lines]
+        _save(f, lambda: master.add_invoice_lines(kind, header, items, expenses),
+              f"✅ {kind} Invoice {bill_no or ''} saved for {party} ({len(items)} item{'s' if len(items) > 1 else ''}).")
 
 
 def _match(value, series):
@@ -338,19 +429,68 @@ def _choose_bill(kind: str, data, key_prefix: str):
 
 def _note_form(kind: str, data, master: MasterFile):
     name = "Debit Note" if kind == "Purchase" else "Credit Note"
+    register = data.debit_notes if kind == "Purchase" else data.credit_notes
     f = f"note_{kind}"
     st.subheader(name)
-    st.caption("Reduces what " + ("we owe the supplier" if kind == "Purchase" else "the customer owes us")
-               + " on a bill (quality claim, weight shortage, rate difference ...).")
+    st.caption(("Goods returned to the supplier, weight shortage, quality claim or rate difference. Reduces what "
+                "we owe the supplier, and the quantity and value come off our purchases.") if kind == "Purchase" else
+               ("Goods returned by the customer, weight shortage, quality claim or rate difference. Reduces what "
+                "the customer owes us, and the quantity and value come off our sales."))
+    note_no, number_ok = _number_field(f, "Note No.", register["note_no"] if len(register) else [],
+                                       "DN-0001" if kind == "Purchase" else "CN-0001")
     bill = _choose_bill(kind, data, f)
     if bill is None:
         return
-    current = bill["note"] if pd.notna(bill["note"]) else 0
-    st.caption(f"Already on this bill: ₹ {inr(current, 2)}")
-    amount = st.number_input(f"{name} amount (₹) *", min_value=0.0, step=100.0, key=_key(f, "amount"))
-    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save")):
-        _save(f, lambda: master.add_note(kind, int(bill["source_row"]), amount),
-              f"✅ {name} of ₹ {inr(amount, 2)} saved on bill {bill['bill_no']} ({bill['party']}).")
+    bill_qty = float(bill["qty"]) if pd.notna(bill["qty"]) else 0.0
+    bill_rate = float(bill["rate"]) if pd.notna(bill["rate"]) else 0.0
+    base = bill["net_amount"] if kind == "Purchase" else bill["amount"]
+    bill_gst = round(float(bill["gst"]) / float(base) * 200) / 2 if pd.notna(bill["gst"]) and base else 0.0
+    done = register[register["bill_row"] == bill["source_row"]] if len(register) else register
+    st.markdown(f"<span class='hint'>Bill: {bill['commodity']} · {bill_qty:,.0f} kg @ ₹{bill_rate:g} · GST "
+                f"{bill_gst:g}% · notes already on this bill: ₹ {inr(bill['note'] if pd.notna(bill['note']) else 0, 2)}"
+                "</span>", unsafe_allow_html=True)
+    bk = f"{f}_{int(bill['source_row'])}"   # defaults refill when another bill is chosen
+
+    c = st.columns(3)
+    when = c[0].date_input("Note date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
+    reason = c[1].selectbox("Reason", NOTE_REASONS, key=_key(f, "reason"))
+    by_qty = c[2].radio("Worked out by", ["Quantity × rate", "Amount only"], horizontal=True,
+                        key=_key(f, "mode"), index=1 if reason == "Rate difference" else 0)
+    c = st.columns(3)
+    if by_qty == "Quantity × rate":
+        qty = c[0].number_input("Quantity (kg)", min_value=0.0, max_value=max(bill_qty, 0.0), step=10.0,
+                                key=_key(bk, "qty"))
+        rate = c[1].number_input("Rate (₹ per kg)", min_value=0.0, value=bill_rate, step=0.25, key=_key(bk, "rate"))
+        taxable = qty * rate
+        c[2].metric("Value before GST", f"₹ {inr(taxable, 2)}")
+    else:
+        qty, rate = 0.0, 0.0
+        taxable = c[0].number_input("Amount before GST (₹)", min_value=0.0, step=100.0, key=_key(bk, "amount"))
+    c = st.columns(3)
+    gst_pct = c[0].number_input("GST %", min_value=0.0, max_value=28.0, step=0.5, value=bill_gst, key=_key(bk, "gst"))
+    other = c[1].number_input("Other charges / expenses (₹)", min_value=0.0, step=100.0, key=_key(bk, "other"),
+                              help=("Freight, unloading or handling on the returned goods that the supplier bears."
+                                    if kind == "Purchase" else
+                                    "Freight or handling we bear for the customer on this note."))
+    gst = round(taxable * gst_pct / 100, 2)
+    total = taxable + gst + other
+    st.markdown(f"<div class='preview'>Value <b>₹ {inr(taxable, 2)}</b> &nbsp;+&nbsp; GST {gst_pct:g}% "
+                f"<b>₹ {inr(gst, 2)}</b> &nbsp;+&nbsp; other charges <b>₹ {inr(other, 2)}</b> &nbsp;=&nbsp; "
+                f"{name} total <b>₹ {inr(total, 2)}</b></div>", unsafe_allow_html=True)
+    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save"), disabled=not number_ok or total <= 0):
+        note = {"note_no": note_no, "date": when, "qty": qty, "rate": rate, "taxable": taxable,
+                "gst_pct": gst_pct, "other": other, "reason": reason}
+        _save(f, lambda: master.add_note_detailed(kind, int(bill["source_row"]), note),
+              f"✅ {name} of ₹ {inr(total, 2)} saved on bill {bill['bill_no']} ({bill['party']}).")
+
+    party_notes = register[register["party"] == bill["party"]] if len(register) else register
+    if len(party_notes):
+        st.markdown(f"#### {name}s for {bill['party']}")
+        v = party_notes[["note_no", "date", "bill_no", "product", "qty", "taxable", "gst", "other", "total", "reason"]]
+        show_table(v.rename(columns={"note_no": "Note No", "date": "Date", "bill_no": "Bill", "product": "Product",
+                                     "qty": "Qty (kg)", "taxable": "Value", "gst": "GST", "other": "Other",
+                                     "total": "Total", "reason": "Reason"}),
+                   money=["Qty (kg)", "Value", "GST", "Other", "Total"], dates=["Date"])
 
 
 # --------------------------------------------------------------------------- ④ expenses

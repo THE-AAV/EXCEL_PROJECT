@@ -174,3 +174,77 @@ def test_validation_errors(master):
 def pd_ts(y, m, d):
     import pandas as pd
     return pd.Timestamp(y, m, d)
+
+
+# --------------------------------------------------------------------------- numbering, multi-item bills, notes
+def test_next_number_follows_the_series():
+    from mis_reports.entries import next_number
+    assert next_number([1, 2, 3]) == 4
+    assert next_number([]) == 1
+    assert next_number(["SCPL/CH12/26-27", "SCPL/CH13/26-27"]) == "SCPL/CH14/26-27"
+    assert next_number(["SCPL/CH13/26-27"]) == "SCPL/CH14/26-27"   # not the year
+    assert next_number(["PO/26-27/009"]) == "PO/26-27/010"
+    assert next_number([], "DN-0001") == "DN-0001"
+    assert next_number(["DN-0001", "DN-0002"], "DN-0001") == "DN-0003"
+
+
+def test_order_numbering_auto_and_manual(master):
+    master.add_order("PO", {"date": date(2026, 9, 1), "party": "A", "commodity": "URAD", "qty_mt": 1, "rate": 1})
+    master.add_order("PO", {"date": date(2026, 9, 1), "party": "A", "commodity": "URAD", "qty_mt": 1, "rate": 1},
+                     contract_no="PO/26-27/007")
+    with pytest.raises(EntryError, match="already used"):
+        master.add_order("PO", {"date": date(2026, 9, 1), "party": "A", "commodity": "URAD", "qty_mt": 1,
+                                "rate": 1}, contract_no="po/26-27/007")
+    d = load_master(master.path)
+    assert d.po["contract_no"].tolist() == ["1", "2", "PO/26-27/007"]
+    assert master.next_contract_no("PO") == "PO/26-27/008"
+
+
+def test_multi_item_invoice_with_contracts_and_pre_bill_expenses(master):
+    po1 = master.add_order("PO", {"date": date(2026, 9, 1), "party": "S", "commodity": "URAD", "qty_mt": 2, "rate": 90})
+    po2 = master.add_order("PO", {"date": date(2026, 9, 1), "party": "S", "commodity": "TOOR", "qty_mt": 1, "rate": 100})
+    rows = master.add_invoice_lines(
+        "Purchase", {"party": "S", "bill_no": "B-9", "bill_date": date(2026, 9, 5)},
+        [{"commodity": "Urad", "qty": 2_000, "rate": 90, "gst_pct": 5, "order_row": po1},
+         {"commodity": "Toor", "qty": 1_000, "rate": 100, "gst_pct": 0, "order_row": po2}],
+        expenses={"adhat": 1_400, "discount": 280})
+    d = load_master(master.path)
+    p = d.purchase.set_index("source_row").loc[rows]
+    assert p["adhat"].tolist() == [900, 500]            # split 180,000 : 100,000
+    assert p["discount"].tolist() == [180, 100]
+    assert p["gst"].tolist() == [pytest.approx(180_720 * 0.05), 0]
+    assert (d.po.set_index("source_row").loc[[po1, po2], "status"] == "Closed").all()
+    assert d.po.set_index("source_row").loc[po1, "bill_no"] == "B-9"
+
+
+def test_detailed_notes_flow_into_pnl_stock_and_ledgers(master):
+    row = master.add_invoice("Purchase", {"party": "S", "commodity": "Urad", "qty": 1_000, "rate": 100,
+                                          "bill_date": date(2026, 9, 1), "bill_no": "P-1"}, gst_pct=5)
+    srow = master.add_invoice_lines("Sales", {"party": "C", "bill_no": "S-1", "bill_date": date(2026, 9, 2)},
+                                    [{"commodity": "Urad", "qty": 500, "rate": 120, "gst_pct": 5, "link_row": row}])[0]
+    assert master.add_note_detailed("Purchase", row, {"qty": 100, "rate": 100, "gst_pct": 5, "other": 50,
+                                                      "reason": "Goods returned"}) == "DN-0001"
+    master.add_note_detailed("Sales", srow, {"qty": 50, "rate": 120, "gst_pct": 5, "note_no": "MY-CN-1"})
+    with pytest.raises(EntryError, match="more than"):
+        master.add_note_detailed("Purchase", row, {"qty": 5_000, "rate": 1})
+
+    d = load_master(master.path)
+    assert d.debit_notes.iloc[0][["qty", "taxable", "gst", "other", "total"]].tolist() == [100, 10_000, 500, 50, 10_550]
+    assert d.credit_notes.iloc[0]["note_no"] == "MY-CN-1"
+    assert d.purchase.set_index("source_row").loc[row, "sales_inv"] == "S-1"
+    assert d.sales.set_index("source_row").loc[srow, "purchase_inv"] == "P-1"
+
+    rs = run_reports(None, Filters(as_of=date(2026, 9, 30)), data=d)
+    urad = rs.pnl.set_index("product").loc["URAD"]
+    assert urad.net_purchase_qty == 900 + 3_000       # existing sample rows hold 3,000 kg
+    assert urad.purchase_returns == 10_050
+    assert urad.sales_return_qty == 50 and urad.sales_returns == 6_000
+    stock = rs.stock.set_index("product").loc["URAD"]
+    assert stock.closing_qty == (3_000 + 1_000 - 100) - (1_000 + 500 - 50)
+    cred = rs.creditors.summary.set_index("party").loc["S"]
+    assert cred.note == pytest.approx(10_550)
+    m = rs.margins.iloc[0]
+    assert m.purchase_bill == "P-1" and m.cost_rate == 100 and m.margin == pytest.approx(500 * 20)
+    assert len(rs.po_detail) == 1 and rs.po_detail.iloc[0].days_open == 72
+    wb = openpyxl.load_workbook(master.path)
+    assert wb.sheetnames[-2:] == ["Debit Notes", "Credit Notes"] and wb["Notes"]["A1"].value == "keep me"

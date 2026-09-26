@@ -48,6 +48,7 @@ PURCHASE_COLUMNS = {
     "vatav": "Vatav",
     "final_amt": "Final Amt.",
     "status": "Status",
+    "sales_inv": "S Inv",
     "pay_date": "Date",
     "paid": "Amount",
     "tds": "TDS",
@@ -85,6 +86,7 @@ SALES_COLUMNS = {
     "gst": "GST",
     "bill_amt": "Bill Amt",
     "status": "Status",
+    "purchase_inv": "P Inv",
     "pay_date": "Date",
     "paid": "Amount",
     "tds": "TDS",
@@ -106,6 +108,42 @@ ORDER_COLUMNS = {
     "bal_qty_mt": "Bal Qty",
     "amount": "AMT",
     "status": "Status",
+    "company": "Company Name",
+    "branch": "Branch",
+    "packing": "Packing",
+    "delivery_date": "Delivery Date",
+    "delivery_place": "Delivery Place",
+    "cancel_qty": "Cancel Qty",
+    "revised_qty": "Revised Qty",
+    "recd_qty": "Recd Qty",
+    "qty_diff": "Qty + / -",
+    "recd_date": "Recd Date",
+    "bill_date": "Bill Date",
+    "bill_no": "Bill No",
+    "bill_rate": "BILL RATE",
+    "lorry_no": "LORRY NO",
+    "bill_weight": "Bill Weight",
+    "warehouse": "Warehouse",
+}
+ORDER_REQUIRED = {"contract_no", "date", "party", "commodity", "qty_mt", "rate", "bal_qty_mt", "amount", "status"}
+
+# Registers of debit notes (purchase side) and credit notes (sales side) kept by the app.
+NOTE_SHEETS = {"Purchase": "Debit Notes", "Sales": "Credit Notes"}
+NOTE_COLUMNS = {
+    "note_no": "Note No",
+    "date": "Date",
+    "party": "Party",
+    "bill_no": "Bill No",
+    "bill_row": "Sheet Row",
+    "product": "Product",
+    "qty": "Qty (kg)",
+    "rate": "Rate",
+    "taxable": "Taxable Value",
+    "gst_pct": "GST %",
+    "gst": "GST",
+    "other": "Other Charges",
+    "total": "Total",
+    "reason": "Reason",
 }
 
 PURCHASE_PRE_PARTS = ["adhat", "amc", "labour", "transport_pre", "wh_load", "bags", "other_pre"]
@@ -113,8 +151,9 @@ PURCHASE_POST_PARTS = ["storage", "brokerage", "sampling", "repacking", "transpo
 SALES_POST_PARTS = ["brokerage", "loading", "repacking"]
 
 TEXT_FIELDS = {"company", "type", "sub_type", "warehouse", "broker", "party", "gstin",
-               "branch", "bill_no", "commodity", "status", "contract_no", "truck_no", "hsn"}
-DATE_FIELDS = {"bill_date", "stock_date", "pay_date", "date"}
+               "branch", "bill_no", "commodity", "status", "contract_no", "truck_no", "hsn", "sales_inv",
+               "purchase_inv", "packing", "delivery_place", "lorry_no", "note_no", "product", "reason"}
+DATE_FIELDS = {"bill_date", "stock_date", "pay_date", "date", "delivery_date", "recd_date"}
 
 
 def _norm(text) -> str:
@@ -135,6 +174,8 @@ class MasterData:
     opening_creditors: dict = field(default_factory=dict)  # party_key -> (party name, opening balance)
     opening_debtors: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    debit_notes: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=list(NOTE_COLUMNS)))
+    credit_notes: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=list(NOTE_COLUMNS)))
 
 
 def _find_header_row(raw: pd.DataFrame, marker: str, max_scan: int = 15) -> int:
@@ -145,7 +186,7 @@ def _find_header_row(raw: pd.DataFrame, marker: str, max_scan: int = 15) -> int:
 
 
 def _read_table(xls: pd.ExcelFile, sheet: str, columns: dict, marker: str,
-                key_field: str, problems: list) -> pd.DataFrame:
+                key_field: str, problems: list, required=None) -> pd.DataFrame:
     raw = pd.read_excel(xls, sheet_name=sheet, header=None)
     hdr = _find_header_row(raw, marker)
     headers = [_norm(v) for v in raw.iloc[hdr].tolist()]
@@ -160,7 +201,8 @@ def _read_table(xls: pd.ExcelFile, sheet: str, columns: dict, marker: str,
             out[fld] = body.iloc[:, idx[0]]
         else:
             out[fld] = pd.NA
-            problems.append(f"{sheet}: column '{header}' not found - treated as blank")
+            if required is None or fld in required:
+                problems.append(f"{sheet}: column '{header}' not found - treated as blank")
 
     out = out[out[key_field].notna() & (out[key_field].astype(str).str.strip() != "")]
     for fld in out.columns:
@@ -239,13 +281,20 @@ def load_master(source) -> MasterData:
         orders = {}
         for sheet in ("PO", "SO"):
             if sheet in xls.sheet_names:
-                df = _read_table(xls, sheet, ORDER_COLUMNS, "Contract No", "commodity", problems)
+                df = _read_table(xls, sheet, ORDER_COLUMNS, "Contract No", "commodity", problems, ORDER_REQUIRED)
                 orders[sheet] = df[df["qty_mt"].notna()].reset_index(drop=True)
             else:
                 orders[sheet] = pd.DataFrame(columns=["source_row", *ORDER_COLUMNS])
         opening_c, opening_d = _read_opening(xls)
+        notes = {}
+        for kind, sheet in NOTE_SHEETS.items():
+            if sheet in xls.sheet_names:
+                notes[kind] = _read_table(xls, sheet, NOTE_COLUMNS, "Note No", "party", problems)
+            else:
+                notes[kind] = pd.DataFrame(columns=["source_row", *NOTE_COLUMNS])
 
     if purchase[["qty", "amount"]].isna().all().all() and len(purchase):
         problems.append("Purchase sheet has no calculated amounts - open and save the file in Excel first")
 
-    return MasterData(purchase, sales, orders["PO"], orders["SO"], opening_c, opening_d, problems)
+    return MasterData(purchase, sales, orders["PO"], orders["SO"], opening_c, opening_d, problems,
+                      notes["Purchase"], notes["Sales"])
