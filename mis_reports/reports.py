@@ -100,9 +100,11 @@ def product_pnl(data: MasterData, f: Filters) -> pd.DataFrame:
         purchase_return_qty=("qty", "sum"), purchase_returns=("value", "sum"))
     c = cn.assign(value=cn["taxable"] + cn["other"]).groupby("product").agg(
         sales_return_qty=("qty", "sum"), sales_returns=("value", "sum"))
-    pnl = p.join(s, how="outer").join(d, how="outer").join(c, how="outer").fillna(0)
+    pnl = p.join(s, how="outer").join(d, how="outer").join(c, how="outer")
     if pnl.empty:
         return pnl.reset_index()
+    # empty note registers come back as text columns - make every figure a number
+    pnl = pnl.apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
 
     pnl["net_purchase_qty"] = pnl["purchase_qty"] - pnl["purchase_return_qty"]
     pnl["net_purchase"] = (pnl["purchase_value"] + pnl["pre_bill_exp"] - pnl["purchase_discount"]

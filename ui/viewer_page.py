@@ -8,6 +8,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
+from . import records_view
+from .records_view import load_tables
 from .sheet_viewer import (column_values, date_number, default_header_row, filter_rows, header_labels,
                            is_date_column, is_numeric_column, load_workbook_views, render_html)
 
@@ -40,8 +42,8 @@ def _files(working: Path | None, input_dir: Path, output_dir: Path) -> dict[str,
 
 def render(working: Path | None, input_dir: Path, output_dir: Path):
     st.title("View Sheets")
-    st.markdown("<span class='hint'>See any workbook the way Excel shows it. The page refreshes by itself when "
-                "the file changes - from this app or from Excel. Hover over a cell to see its formula.</span>",
+    st.markdown("<span class='hint'>All the entries in every sheet, laid out cleanly with filters. The page "
+                "refreshes by itself when the file changes - from this app or from Excel.</span>",
                 unsafe_allow_html=True)
 
     files = _files(working, input_dir, output_dir)
@@ -66,6 +68,11 @@ def render(working: Path | None, input_dir: Path, output_dir: Path):
     with top[0]:
         choice = st.selectbox("Workbook", labels, key="viewer_file")
     source = files[choice]
+    layout = st.segmented_control("Show as", ["🧾 Clean table of entries", "📄 Excel layout"], key="viewer_layout",
+                                  default="🧾 Clean table of entries")
+    if layout != "📄 Excel layout":
+        _clean(source, choice, working, uploads)
+        return
 
     opts = st.columns([3, 1.4, 1.4, 1.6])
     find = opts[0].text_input("🔍 Find", key="viewer_find", placeholder="Type to show only matching rows")
@@ -141,6 +148,53 @@ def render(working: Path | None, input_dir: Path, output_dir: Path):
     st.download_button("⬇️ Download this workbook", data,
                        file_name=source.name if isinstance(source, Path) else source,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@st.cache_resource(show_spinner="Reading the entries...", max_entries=8)
+def _tables_from_path(path: str, mtime_ns: int):
+    return load_tables(path)
+
+
+@st.cache_resource(show_spinner="Reading the entries...", max_entries=4)
+def _tables_from_bytes(content: bytes):
+    return load_tables(content)
+
+
+def _clean(source, choice: str, working: Path | None, uploads: dict):
+    try:
+        if isinstance(source, Path):
+            stat = source.stat()
+            tables = _tables_from_path(str(source), stat.st_mtime_ns)
+            st.session_state["watch_extra"] = [str(source)] if source != working else []
+            saved = f"Last saved {datetime.fromtimestamp(stat.st_mtime):%d-%b-%Y %H:%M:%S}"
+        else:
+            tables = _tables_from_bytes(uploads[source])
+            st.session_state["watch_extra"] = []
+            saved = "Opened here (view only)"
+    except PermissionError:
+        st.warning("The file is being saved by Excel - refreshing in a moment...")
+        return
+    except Exception as exc:
+        st.error(f"This file could not be opened: {exc}")
+        return
+    names = [n for n, df in tables.items() if len(df)]
+    if not names:
+        st.info("This workbook has no entries to show.")
+        return
+    wb_key = hashlib.md5(choice.encode()).hexdigest()[:8]
+    key = f"clean_sheet_{wb_key}"
+    preferred = next((n for n in ("Purchase", "Sales") if n in names), names[0])
+    if st.session_state.get(key) not in names:
+        last = st.session_state.get(key + "_last")
+        st.session_state[key] = last if last in names else preferred
+    st.session_state[key + "_last"] = st.session_state[key]
+    st.segmented_control("Sheet", names, key=key,
+                         format_func=lambda n: f"{n}  ({len(tables[n]):,})")
+    sheet = st.session_state[key]
+    with st.container(border=True):
+        st.subheader(sheet)
+        records_view.render(tables[sheet], f"rv_{wb_key}_{sheet}", sheet)
+    st.caption(saved)
 
 
 def _filter_panel(view: dict, key: str):

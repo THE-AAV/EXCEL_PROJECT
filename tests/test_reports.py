@@ -138,3 +138,12 @@ def test_party_with_only_opening_balance_is_listed():
     s = run_reports(src, Filters(as_of=AS_OF)).creditors.summary.set_index("party")
     assert s.loc["Old Supplier", "closing"] == 2_500
     assert s.loc["Old Supplier", "Undated"] == 2_500
+
+
+def test_pnl_columns_are_numbers_without_any_notes():
+    src = make_master([pur("A", "Urad", 1000, 90, D1)], [sale("X", "Urad", 400, 100, D2)])
+    pnl = run_reports(src, Filters(as_of=AS_OF)).pnl
+    total = pnl.sum(numeric_only=True)
+    for col in ("net_purchase_qty", "net_sales_qty", "purchase_returns", "sales_returns", "net_profit"):
+        assert col in total.index
+    assert total["net_purchase_qty"] == 1000

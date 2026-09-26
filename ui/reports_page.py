@@ -1,14 +1,13 @@
 """Reports page: dashboard, product P&L, creditors, debtors, orders, data checks, product names."""
 from __future__ import annotations
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 from mis_reports import reports as R
 from mis_reports.pipeline import save_aliases
 
-from .common import AGE_COLORS, LOSS, PROFIT, inr, short_inr, show_table, total
+from .common import inr, short_inr, show_table, total
 
 
 def render(data, rs, opts, aliases, as_of, source_name):
@@ -49,43 +48,8 @@ def render(data, rs, opts, aliases, as_of, source_name):
                 st.info("ℹ️ No purchase found for **" + ", ".join(no_cost) + "**, so its sales are counted "
                         "without any cost and its profit is overstated. If it was bought under another name, "
                         "map the names in the **Product Names** tab.")
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Net profit by product")
-            if len(pnl):
-                chart_df = pnl[["product", "net_profit", "net_sales"]].copy()
-                chart_df["result"] = chart_df["net_profit"].map(lambda v: "Profit" if v >= 0 else "Loss")
-                chart_df["amount"] = chart_df["net_profit"].map(inr)
-                chart = alt.Chart(chart_df).mark_bar(cornerRadiusEnd=4, size=16).encode(
-                    y=alt.Y("product:N", sort="-x", title=None),
-                    x=alt.X("net_profit:Q", title="Net profit (₹ lakh)",
-                            axis=alt.Axis(labelExpr="format(datum.value / 1e5, ',.0f') + ' L'", grid=True)),
-                    color=alt.Color("result:N", scale=alt.Scale(domain=["Profit", "Loss"], range=[PROFIT, LOSS]),
-                                    legend=alt.Legend(title=None, orient="top")),
-                    tooltip=[alt.Tooltip("product:N", title="Product"), alt.Tooltip("amount:N", title="Net profit ₹")],
-                ).properties(height=max(32 * len(chart_df), 200))
-                st.altair_chart(chart, width="stretch")
-        with right:
-            st.subheader("Outstanding by age")
-            age = pd.DataFrame([
-                {"side": side, "bucket": b, "amount": total(led.summary, b)}
-                for side, led in (("Payable", cred), ("Receivable", debt))
-                for b in R.BUCKET_NAMES])
-            age["label"] = age["amount"].map(inr)
-            chart = alt.Chart(age).mark_bar(size=40, stroke="white", strokeWidth=2).encode(
-                x=alt.X("side:N", title=None, axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("amount:Q", title="Outstanding (₹ crore)",
-                        axis=alt.Axis(labelExpr="format(datum.value / 1e7, ',.0f') + ' Cr'")),
-                color=alt.Color("bucket:N", sort=R.BUCKET_NAMES,
-                                scale=alt.Scale(domain=R.BUCKET_NAMES, range=AGE_COLORS),
-                                legend=alt.Legend(title="Age", orient="right")),
-                order=alt.Order("bucket_order:Q"),
-                tooltip=[alt.Tooltip("side:N", title=""), alt.Tooltip("bucket:N", title="Age"),
-                         alt.Tooltip("label:N", title="Amount ₹")],
-            ).transform_calculate(
-                bucket_order=f"indexof({R.BUCKET_NAMES!r}, datum.bucket)"
-            ).properties(height=320)
-            st.altair_chart(chart, width="stretch")
+        st.subheader("Stock in hand")
+        simple_stock(rs.stock)
 
     # --------------------------------------------------------------------------- product P&L
     STATEMENT = [
@@ -171,26 +135,17 @@ def render(data, rs, opts, aliases, as_of, source_name):
         if not len(stock):
             st.info("No stock movements match the selected filters.")
         else:
-            c = st.columns(4)
-            c[0].metric("Stock in hand (kg)", inr(total(stock, "closing_qty")))
-            c[1].metric("Stock value", short_inr(total(stock, "closing_value")))
-            c[2].metric("To receive - open POs (kg)", inr(total(stock, "pending_po_qty")))
-            c[3].metric("To deliver - open SOs (kg)", inr(total(stock, "pending_so_qty")))
-            sc = {"product": "Product", "purchase_qty": "Purchased", "purchase_return_qty": "Returned to Suppliers",
-                  "sales_qty": "Sold", "sales_return_qty": "Returned by Customers", "closing_qty": "Stock in Hand",
-                  "avg_cost_rate": "Avg Cost / kg", "closing_value": "Stock Value",
-                  "pending_po_qty": "To Receive (PO)", "pending_so_qty": "To Deliver (SO)",
-                  "projected_qty": "Stock after Orders"}
-            show_table(stock[list(sc)].rename(columns=sc),
-                       money=["Purchased", "Returned to Suppliers", "Sold", "Returned by Customers", "Stock in Hand",
-                              "Stock Value", "To Receive (PO)", "To Deliver (SO)", "Stock after Orders"],
-                       rate=["Avg Cost / kg"])
-            neg = stock[stock["closing_qty"] < 0]["product"].tolist()
-            if neg:
-                st.warning("More sold than bought for: " + ", ".join(neg) + ". There may be opening stock that "
-                           "is not in the Master Sheet, or a product name that needs mapping (⚙️ Product Names).")
-            st.caption("Stock in Hand = Purchased − Returned to Suppliers − Sold + Returned by Customers. "
-                       "Stock after Orders also counts open purchase and sales contracts.")
+            simple_stock(stock)
+            with st.expander("More detail: bought, sold, returns and open orders"):
+                sc = {"product": "Product", "purchase_qty": "Purchased", "purchase_return_qty": "Returned to Suppliers",
+                      "sales_qty": "Sold", "sales_return_qty": "Returned by Customers", "closing_qty": "Stock in Hand",
+                      "pending_po_qty": "To Receive (PO)", "pending_so_qty": "To Deliver (SO)",
+                      "projected_qty": "Stock after Orders"}
+                show_table(stock[list(sc)].rename(columns=sc),
+                           money=["Purchased", "Returned to Suppliers", "Sold", "Returned by Customers",
+                                  "Stock in Hand", "To Receive (PO)", "To Deliver (SO)", "Stock after Orders"])
+                st.caption("Stock in Hand = Purchased − Returned to Suppliers − Sold + Returned by Customers. "
+                           "Stock after Orders also counts open purchase and sales contracts.")
 
 
     # --------------------------------------------------------------------------- ledgers
@@ -338,3 +293,28 @@ def notes_tab(rs):
               "other": "Other Charges", "total": "Total", "reason": "Reason"}
         show_table(df[list(nc)].rename(columns=nc), money=["Qty (kg)", "Value", "GST", "Other Charges", "Total"],
                    rate=["Rate", "GST %"], dates=["Date"])
+
+
+def simple_stock(stock):
+    """Plain summary: how much of each product we have and what it is worth."""
+    if stock is None or not len(stock):
+        st.info("No stock yet.")
+        return
+    have = stock[stock["closing_qty"].round(3) != 0].copy()
+    c = st.columns(3)
+    c[0].metric("Products in stock", int((have["closing_qty"] > 0).sum()))
+    c[1].metric("Total stock", f"{inr(have.loc[have['closing_qty'] > 0, 'closing_qty'].sum() / 1000, 2)} MT")
+    c[2].metric("Stock value", short_inr(have.loc[have["closing_qty"] > 0, "closing_value"].sum()))
+    neg = have.loc[have["closing_qty"] < 0, "product"].tolist()
+    have = have[have["closing_qty"] > 0].sort_values("closing_qty", ascending=False)
+    view = pd.DataFrame({"Product": have["product"], "Stock (kg)": have["closing_qty"],
+                         "Stock (MT)": have["closing_qty"] / 1000, "Avg cost / kg": have["avg_cost_rate"],
+                         "Stock value (₹)": have["closing_value"]})
+    tot = pd.DataFrame([{"Product": "TOTAL", "Stock (kg)": view["Stock (kg)"].clip(lower=0).sum(),
+                         "Stock (MT)": view["Stock (MT)"].clip(lower=0).sum(), "Avg cost / kg": float("nan"),
+                         "Stock value (₹)": view.loc[view["Stock (kg)"] > 0, "Stock value (₹)"].sum()}])
+    show_table(pd.concat([view, tot], ignore_index=True), money=["Stock (kg)", "Stock value (₹)"],
+               rate=["Stock (MT)", "Avg cost / kg"])
+    if neg:
+        st.caption("⚠️ Not shown because more was sold than bought: " + ", ".join(neg) +
+                   " - probably opening stock not in the Master Sheet, or a product name to map in ⚙️ Product Names.")

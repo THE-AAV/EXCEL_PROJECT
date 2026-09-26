@@ -76,3 +76,23 @@ def test_filter_and_sort(tmp_path):
     assert filter_rows(v, 1, {}, sort=(3, True)) == [2, 4, 3, 5]      # blanks last
     html, _ = render_html(v, header_row=1, shown_rows=[4, 2], filter_cols={1})
     assert html.index(">30<") < html.index(">10<") and 'class="fb on"' in html
+
+
+def test_clean_table_of_entries(tmp_path):
+    from ui.records_view import load_tables
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Purchase"
+    ws.append(["Register"])
+    ws.append([])
+    ws.append(["PARTY NAME", "HSN CODE", "BILL DATE", "WEIGHT", "Empty col"])
+    ws.append(["A", "07133110", datetime(2026, 8, 1), 1000, None])
+    ws.append([None, None, None, None, None])
+    ws.append(["B", "07133110", datetime(2026, 8, 2), 500.5, None])
+    p = tmp_path / "c.xlsx"
+    wb.save(p)
+    t = load_tables(str(p))["Purchase"]
+    assert list(t.columns) == ["Sheet row", "PARTY NAME", "HSN CODE", "BILL DATE", "WEIGHT"]
+    assert t["Sheet row"].tolist() == [4, 6]            # empty row dropped, rows keep the sheet's numbers
+    assert t["HSN CODE"].tolist() == ["07133110", "07133110"]
+    assert str(t["BILL DATE"].dtype).startswith("datetime64") and t["WEIGHT"].sum() == 1500.5

@@ -19,7 +19,7 @@ The reports are:
 | **Creditors** (payables) | Every purchase party: opening balance, amount payable, paid, TDS, debit notes, closing balance, split by age (0-30 / 31-60 / 61-90 / over 90 days / undated) |
 | **Debtors** (receivables) | Every sales party: the same layout for what customers owe us |
 | **Outstanding bills** | Bill-by-bill list behind each creditor and debtor balance |
-| **Stock summary** | Per product: purchased, returned to suppliers, sold, returned by customers, stock in hand and its value, plus open PO / SO quantities and stock after orders |
+| **Stock summary** | How much of each product is in stock (kg and MT), its average cost and value, with totals - also on the dashboard. Purchased / sold / returns and open orders are one click away |
 | **Purchase & sales orders** | Every contract: quantity, cancelled, received / delivered, balance, value, % done, status, invoices, days open |
 | **Debit / credit notes** | Every note with quantity, value, GST, other charges and reason |
 | **Bill-wise margin** | Margin on each sales bill linked to the purchase bill the goods came from |
@@ -45,20 +45,30 @@ You can keep using Excel as well. Changes saved in Excel show up in the app with
    entries into it. If there are several files in `input`, the newest one is used.
 
 ### Entering transactions (📝 Enter transactions)
-Pick a step at the top, fill in the form and click **Save**. Fields marked * are required.
+Pick a step at the top, then an **Entry style**:
+- **📝 Form** - one entry at a time with boxes and dropdowns. Fields marked * are required.
+- **📊 Table (like Excel)** - a grid you type into like Excel (copy / paste from Excel works too). Enter
+  as many rows as you like and click **Save all rows**: all rows are saved together, or - if any row has a
+  problem - none are, and the message names the row. One **Undo** takes the whole batch back out. In the
+  invoice tables, rows with the same party, bill no. and date become one bill; in the note tables, rows on
+  the same bill with the same note no. (or date) become one note; in the payment / receipt tables, rows with
+  the same party and date become one payment. Party and product names are matched to the spelling already
+  in the sheet (capital letters and spaces don't matter), and new names are listed before saving.
+
+In the form style:
 Dropdowns list the names already in the sheet. You can also type a new name.
 
 | Step | What it does in the Master Sheet |
 |---|---|
 | ① Purchase Order | Adds a row to the **PO** sheet. Contract No. is **automatic** (next in your series, e.g. `PO/26-27/009` → `PO/26-27/010`) or **your own** (duplicates are blocked) |
 | ② Purchase Invoice | One bill with **one or more items**, each item optionally **against a different contract** (the contract's product, rate and balance quantity are filled in). Each item becomes a row in the **Purchase** sheet with the sheet's own formulas, and each contract's *Recd Qty* is updated, closing it when fully received. The **💰 Pre-bill expenses** tab takes Adhat, AMC, Labour, Transportation, WH Load, Bags, Other and Discount for the whole bill and splits them over the items by value |
-| ③ Debit Note | Goods returned, weight shortage, quality claim or rate difference: **quantity × rate** (or an amount only), **GST %** (defaults to the bill's rate) and **other charges / expenses**. The note gets an automatic number (`DN-0001` ...) or your own, is listed in a new **Debit Notes** sheet, and its total is added to *Debit Note / Other de.* on the bill. Its quantity and value come off purchases in the P&L and stock |
-| ④ Expenses | Sets Adhat, AMC, Labour, Transportation, WH Load, Bags, Other, Discount, Vatav, Storage, Brokerage, Sampling, Repacking on a purchase bill, or Brokerage, Loading/Unloading, Repacking, Discount on a sales bill |
-| ⑤ Payment | Spreads the amount over the supplier's oldest unpaid bills (you can change the split and add TDS), writes *Date*, *Amount* and *TDS* on each bill and marks fully paid bills **Paid** |
+| ③ Debit Note | One note can have **several reasons** (goods returned, weight shortage, quality claim, rate difference, moisture / dust …), each by **quantity × rate** or as an amount, with **GST %** (defaults to the bill's rate), plus **several expenses** the supplier bears (freight, unloading, handling …, no GST). Automatic number (`DN-0001` …) or your own. Every reason and expense is a row in the **Debit Notes** sheet under the note number; the total is added to *Debit Note / Other de.* on the bill. Quantity and value come off purchases in the P&L and stock |
+| ④ Expenses | Post-bill expenses (Storage, Brokerage, Sampling, Repacking, Transportation) and Vatav on a purchase bill, or Brokerage, Loading/Unloading, Repacking and Discount on a sales bill. Pre-bill expenses and the purchase discount are entered with the purchase invoice |
+| ⑤ Payment | Enter the **total amount paid**, then **tick the invoices** it is adjusted against (or click *Adjust oldest first*). A ticked invoice is cleared in full unless you type a smaller amount; TDS can be added per invoice. *Total / Adjusted / Balance* are shown as you go; a balance left over can be kept as an advance. Writes *Date*, *Amount* and *TDS* on each invoice and marks fully paid ones **Paid** |
 | ⑥ Sales Order | Adds a row to the **SO** sheet, with automatic or your own contract number |
 | ⑦ Sales Invoice | Like the purchase invoice (several items, each against a sales contract). The invoice number is suggested as the next in your series. Each item can **optionally be linked to the purchase bill** the goods came from: the purchase bill no. goes in *P Inv* on the sales row and the sales bill no. in *S Inv* on the purchase row, and the **Bill-wise margin** report shows the profit on it |
 | ⑧ Credit Note | Like the debit note, for sales bills (numbers `CN-0001` ...), listed in a new **Credit Notes** sheet. Its quantity goes back into stock and its value comes off sales |
-| ⑨ Receipt | Like Payment, for customers. Fully received bills are marked **Recd** |
+| ⑨ Receipt | The same for customers: total amount received, adjusted against several invoices. Fully received invoices are marked **Recd** |
 
 Things to know:
 - **Close the Master Sheet in Excel before saving from the app.** Windows locks a file while Excel
@@ -70,20 +80,17 @@ Things to know:
   and all other sheets are left as they are. Excel recalculates everything the next time you open the file.
 
 ### Viewing the sheets (📄 View sheets)
-A read-only view of any workbook that looks like Excel: column letters, row numbers, your fonts, colours,
-borders, number and date formats, merged cells and frozen headers, with a **tab for every sheet** at the bottom.
-- **Workbook:** the working Master Sheet, other files in `input`, saved report files in `output`, or any
-  Excel file you open here (view only - it is not changed or saved).
-- **Updates by itself** within a few seconds whenever the file is saved, from this app or from Excel.
-- **Hover over a cell** to see its formula, or switch on **Show formulas** to see all of them.
-  A cell showing **…** has a formula Excel has not worked out yet (it will when the file is next opened in Excel).
-- **🔍 Find** shows only the rows containing the text you type.
-- **⏷ Filter & sort** works like Excel's filter: pick a column (by its header), tick the values to keep
-  (including *(Blanks)*), or use *Text contains*, a *Min / Max* for numbers or a *From / To date* for dates.
-  Filters on several columns combine. **Sort by** any column, smallest or largest first. The header row is
-  found automatically (the sheet's own filter row or frozen rows) and can be changed. Filtered columns are
-  marked on the header, and the row numbers stay the sheet's own.
-- **Zoom**, and **Numbers** in Indian (12,34,567) or international (1,234,567) grouping.
+- **🧾 Clean table of entries** (the default): pick a sheet (the number of entries is shown on each tab) and
+  see its entries as a clean table - the real column names, no empty rows or columns, dates and amounts
+  formatted, codes such as HSN / GSTIN / bill numbers kept exactly as typed, and the sheet row of each entry.
+  - **Filter:** a search box, quick filters for Party, Product and Broker, a date range, and
+    **➕ More filters** for any column (values to show, *contains*, from / to for numbers and dates) and to
+    hide columns. Click a column heading to sort.
+  - **Totals** of the amount / weight columns for the rows shown, and **Download** of those rows (CSV).
+- **📄 Excel layout**: the sheet exactly as Excel shows it (colours, borders, merged cells, frozen headers,
+  formulas on hover), with Excel-style filter and sort.
+- Works for the working Master Sheet, other files in `input`, saved reports in `output`, or any Excel file
+  you open here (view only), and refreshes by itself when the file is saved.
 
 ### Viewing reports (📊 View reports)
 1. Pick the *Balances as on* date. You can also narrow the reports to a P&L period,
@@ -149,8 +156,10 @@ so it stays correct if you edit a figure.
 ```
 app.py                  Streamlit web app shell (working file, mode switch, auto-reload)
 ui/entries_page.py      the nine transaction forms
+ui/table_entry.py       the 'Table (like Excel)' entry style for all nine sections
 ui/reports_page.py      dashboard and report tabs
 ui/viewer_page.py       'View sheets' page (file picker, sheet tabs, find, filter & sort)
+ui/records_view.py      the 'clean table of entries' view with filters and totals
 ui/sheet_viewer.py      turns a workbook into Excel-like HTML (styles, number formats, merges, frozen panes)
                         and does the filtering / sorting
 generate_reports.py     command-line / scheduled / --watch report generation

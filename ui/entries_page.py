@@ -11,10 +11,11 @@ import pandas as pd
 import streamlit as st
 
 from mis_reports import reports as R
-from mis_reports.entries import (EXPENSE_FIELDS, NOTE_REASONS, EntryError, MasterFile, split_by_value, next_number,
+from mis_reports.entries import (EXPENSE_FIELDS, NOTE_EXPENSES, NOTE_REASONS, EntryError, MasterFile, split_by_value, next_number,
                                  restore_latest_backup)
 from mis_reports.xlsx_edit import FileLockedError
 
+from . import table_entry
 from .common import inr, show_table
 
 STEPS = ["Purchase Order", "Purchase Invoice", "Debit Note", "Expenses", "Payment",
@@ -112,6 +113,14 @@ def render(data, master: MasterFile, aliases: dict):
     step = st.segmented_control("Step", [f"{NUMS[i]} {s}" for i, s in enumerate(STEPS)], key="entry_step",
                                 default=f"{NUMS[0]} {STEPS[0]}", label_visibility="collapsed")
     step = STEPS[[f"{NUMS[i]} {s}" for i, s in enumerate(STEPS)].index(step)] if step else STEPS[0]
+    style = st.segmented_control("Entry style", ["📝 Form", "📊 Table (like Excel)"], key="entry_style",
+                                 default="📝 Form", help="Form: one entry at a time with boxes and dropdowns. "
+                                 "Table: type many rows in a grid, like Excel, and save them together.")
+    if style == "📊 Table (like Excel)":
+        with st.container(border=True):
+            table_entry.render(step, data, master, ledgers)
+        _footer(master)
+        return
     with st.container(border=True):
         if step == "Purchase Order":
             _order_form("PO", data, master)
@@ -131,7 +140,10 @@ def render(data, master: MasterFile, aliases: dict):
             _note_form("Sales", data, master)
         else:
             _settlement_form("Sales", data, master, ledgers["Sales"])
+    _footer(master)
 
+
+def _footer(master: MasterFile):
     st.divider()
     left, right = st.columns([3, 1])
     with left:
@@ -432,10 +444,11 @@ def _note_form(kind: str, data, master: MasterFile):
     register = data.debit_notes if kind == "Purchase" else data.credit_notes
     f = f"note_{kind}"
     st.subheader(name)
-    st.caption(("Goods returned to the supplier, weight shortage, quality claim or rate difference. Reduces what "
-                "we owe the supplier, and the quantity and value come off our purchases.") if kind == "Purchase" else
-               ("Goods returned by the customer, weight shortage, quality claim or rate difference. Reduces what "
-                "the customer owes us, and the quantity and value come off our sales."))
+    st.caption(("Reduces what we owe the supplier. Add one line per reason (goods returned, weight shortage, "
+                "quality claim, rate difference ...) and any expenses the supplier bears (freight, unloading ...).")
+               if kind == "Purchase" else
+               ("Reduces what the customer owes us. Add one line per reason (goods returned, weight shortage, "
+                "quality claim, rate difference ...) and any expenses we bear for the customer."))
     note_no, number_ok = _number_field(f, "Note No.", register["note_no"] if len(register) else [],
                                        "DN-0001" if kind == "Purchase" else "CN-0001")
     bill = _choose_bill(kind, data, f)
@@ -445,52 +458,77 @@ def _note_form(kind: str, data, master: MasterFile):
     bill_rate = float(bill["rate"]) if pd.notna(bill["rate"]) else 0.0
     base = bill["net_amount"] if kind == "Purchase" else bill["amount"]
     bill_gst = round(float(bill["gst"]) / float(base) * 200) / 2 if pd.notna(bill["gst"]) and base else 0.0
-    done = register[register["bill_row"] == bill["source_row"]] if len(register) else register
     st.markdown(f"<span class='hint'>Bill: {bill['commodity']} · {bill_qty:,.0f} kg @ ₹{bill_rate:g} · GST "
                 f"{bill_gst:g}% · notes already on this bill: ₹ {inr(bill['note'] if pd.notna(bill['note']) else 0, 2)}"
                 "</span>", unsafe_allow_html=True)
-    bk = f"{f}_{int(bill['source_row'])}"   # defaults refill when another bill is chosen
+    bk = f"{f}_{int(bill['source_row'])}"   # tables refill when another bill is chosen
+    when = st.date_input("Note date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
 
-    c = st.columns(3)
-    when = c[0].date_input("Note date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
-    reason = c[1].selectbox("Reason", NOTE_REASONS, key=_key(f, "reason"))
-    by_qty = c[2].radio("Worked out by", ["Quantity × rate", "Amount only"], horizontal=True,
-                        key=_key(f, "mode"), index=1 if reason == "Rate difference" else 0)
-    c = st.columns(3)
-    if by_qty == "Quantity × rate":
-        qty = c[0].number_input("Quantity (kg)", min_value=0.0, max_value=max(bill_qty, 0.0), step=10.0,
-                                key=_key(bk, "qty"))
-        rate = c[1].number_input("Rate (₹ per kg)", min_value=0.0, value=bill_rate, step=0.25, key=_key(bk, "rate"))
-        taxable = qty * rate
-        c[2].metric("Value before GST", f"₹ {inr(taxable, 2)}")
-    else:
-        qty, rate = 0.0, 0.0
-        taxable = c[0].number_input("Amount before GST (₹)", min_value=0.0, step=100.0, key=_key(bk, "amount"))
-    c = st.columns(3)
-    gst_pct = c[0].number_input("GST %", min_value=0.0, max_value=28.0, step=0.5, value=bill_gst, key=_key(bk, "gst"))
-    other = c[1].number_input("Other charges / expenses (₹)", min_value=0.0, step=100.0, key=_key(bk, "other"),
-                              help=("Freight, unloading or handling on the returned goods that the supplier bears."
-                                    if kind == "Purchase" else
-                                    "Freight or handling we bear for the customer on this note."))
-    gst = round(taxable * gst_pct / 100, 2)
-    total = taxable + gst + other
-    st.markdown(f"<div class='preview'>Value <b>₹ {inr(taxable, 2)}</b> &nbsp;+&nbsp; GST {gst_pct:g}% "
-                f"<b>₹ {inr(gst, 2)}</b> &nbsp;+&nbsp; other charges <b>₹ {inr(other, 2)}</b> &nbsp;=&nbsp; "
-                f"{name} total <b>₹ {inr(total, 2)}</b></div>", unsafe_allow_html=True)
-    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save"), disabled=not number_ok or total <= 0):
-        note = {"note_no": note_no, "date": when, "qty": qty, "rate": rate, "taxable": taxable,
-                "gst_pct": gst_pct, "other": other, "reason": reason}
+    st.markdown("**Reasons** - one line each. Leave *Amount* empty to use quantity × rate.")
+    reasons = st.data_editor(
+        pd.DataFrame([{"Reason": NOTE_REASONS[0], "Qty (kg)": None, "Rate (₹/kg)": bill_rate,
+                       "Amount excl. GST (₹)": None, "GST %": bill_gst}]),
+        num_rows="dynamic", hide_index=True, width="stretch", key=_key(bk, "reasons"),
+        column_config={"Reason": st.column_config.SelectboxColumn(options=NOTE_REASONS, required=True),
+                       "Qty (kg)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+                       "Rate (₹/kg)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+                       "Amount excl. GST (₹)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+                       "GST %": st.column_config.NumberColumn(min_value=0.0, max_value=28.0, format="%.1f")})
+    st.markdown("**Expenses** " + ("the supplier bears" if kind == "Purchase" else "we bear for the customer")
+                + " (no GST) - one line each.")
+    expenses = st.data_editor(
+        pd.DataFrame([{"Expense": NOTE_EXPENSES[0], "Amount (₹)": None}]), num_rows="dynamic", hide_index=True,
+        width="stretch", key=_key(bk, "expenses"),
+        column_config={"Expense": st.column_config.SelectboxColumn(options=NOTE_EXPENSES, required=True),
+                       "Amount (₹)": st.column_config.NumberColumn(min_value=0.0, format="%.2f")})
+
+    lines, preview = [], []
+    for _, r in reasons.iterrows():
+        qty = _f(r["Qty (kg)"])
+        rate = _f(r["Rate (₹/kg)"])
+        amount = _f(r["Amount excl. GST (₹)"]) or round(qty * rate, 2)
+        if not amount:
+            continue
+        gst = round(amount * _f(r["GST %"]) / 100, 2)
+        lines.append({"reason": r["Reason"], "qty": qty, "rate": rate if qty else 0, "taxable": amount,
+                      "gst_pct": _f(r["GST %"])})
+        preview.append({"Line": r["Reason"], "Qty (kg)": qty, "Value": amount, "GST": gst, "Total": amount + gst})
+    ex = []
+    for _, r in expenses.iterrows():
+        if _f(r["Amount (₹)"]):
+            ex.append({"type": r["Expense"], "amount": _f(r["Amount (₹)"])})
+            preview.append({"Line": f"Expense: {r['Expense']}", "Qty (kg)": 0.0, "Value": 0.0, "GST": 0.0,
+                            "Total": _f(r["Amount (₹)"])})
+    total = sum(p["Total"] for p in preview)
+    qty_total = sum(p["Qty (kg)"] for p in preview)
+    if preview:
+        show_table(pd.DataFrame(preview), money=["Qty (kg)", "Value", "GST", "Total"])
+    st.markdown(f"<div class='preview'>{name} total <b>₹ {inr(total, 2)}</b>"
+                + (f" · quantity {qty_total:,.2f} kg" if qty_total else "") + "</div>", unsafe_allow_html=True)
+    if qty_total > bill_qty + 0.001:
+        st.warning(f"Quantity {qty_total:,.2f} kg is more than the {bill_qty:,.2f} kg on the bill.")
+    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save"),
+                 disabled=not number_ok or total <= 0 or qty_total > bill_qty + 0.001):
+        note = {"note_no": note_no, "date": when, "lines": lines, "expenses": ex}
         _save(f, lambda: master.add_note_detailed(kind, int(bill["source_row"]), note),
               f"✅ {name} of ₹ {inr(total, 2)} saved on bill {bill['bill_no']} ({bill['party']}).")
 
     party_notes = register[register["party"] == bill["party"]] if len(register) else register
     if len(party_notes):
         st.markdown(f"#### {name}s for {bill['party']}")
-        v = party_notes[["note_no", "date", "bill_no", "product", "qty", "taxable", "gst", "other", "total", "reason"]]
-        show_table(v.rename(columns={"note_no": "Note No", "date": "Date", "bill_no": "Bill", "product": "Product",
-                                     "qty": "Qty (kg)", "taxable": "Value", "gst": "GST", "other": "Other",
-                                     "total": "Total", "reason": "Reason"}),
-                   money=["Qty (kg)", "Value", "GST", "Other", "Total"], dates=["Date"])
+        v = party_notes[["note_no", "date", "bill_no", "reason", "qty", "taxable", "gst", "other", "total"]]
+        show_table(v.rename(columns={"note_no": "Note No", "date": "Date", "bill_no": "Bill", "reason": "Reason",
+                                     "qty": "Qty (kg)", "taxable": "Value", "gst": "GST", "other": "Expense",
+                                     "total": "Total"}),
+                   money=["Qty (kg)", "Value", "GST", "Expense", "Total"], dates=["Date"])
+
+
+def _f(v) -> float:
+    try:
+        v = float(v)
+        return 0.0 if v != v else v
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # --------------------------------------------------------------------------- ④ expenses
@@ -499,6 +537,9 @@ def _expense_form(data, master: MasterFile):
     st.subheader("Expenses on a bill")
     kind = st.radio("Bill type", ["Purchase", "Sales"], horizontal=True, key=_key(f, "kind"),
                     format_func=lambda k: f"{k} bill")
+    if kind == "Purchase":
+        st.caption("Storage, brokerage and other expenses after the bill, and Vatav. Pre-bill expenses and discount "
+                   "are entered on the purchase invoice (② Purchase Invoice → 💰 Pre-bill expenses).")
     bill = _choose_bill(kind, data, f"{f}_{kind}")
     if bill is None:
         return
@@ -524,6 +565,8 @@ def _settlement_form(kind: str, data, master: MasterFile, ledger: R.Ledger):
     name = "Payment" if kind == "Purchase" else "Receipt"
     f = f"settle_{kind}"
     st.subheader(f"{name} " + ("to supplier" if kind == "Purchase" else "from customer"))
+    st.caption(f"Enter the total {name.lower()}, then tick the invoices it is adjusted against. Ticked invoices "
+               "are cleared in full unless you type a smaller amount. You can also add TDS per invoice.")
     bills = ledger.bills[ledger.bills["source_row"].notna()]
     due = bills.groupby("party")["outstanding"].sum()
     parties = [p for p in due.index if due[p] > 0.5]
@@ -532,47 +575,78 @@ def _settlement_form(kind: str, data, master: MasterFile, ledger: R.Ledger):
         return
     c = st.columns(3)
     party = c[0].selectbox("Party *", sorted(parties, key=str.lower), index=None, key=_key(f, "party"),
-                           placeholder="Choose party",
-                           format_func=lambda p: f"{p}  (due ₹ {inr(due[p])})")
+                           placeholder="Choose party", format_func=lambda p: f"{p}  (due ₹ {inr(due[p])})")
     if not party:
         return
-    pb = bills[bills["party"] == party].reset_index(drop=True)
+    pb = bills[bills["party"] == party].sort_values("bill_date", na_position="first").reset_index(drop=True)
     total_due = float(pb["outstanding"].sum())
     when = c[1].date_input(f"{name} date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
-    amount = c[2].number_input(f"Amount {'paid' if kind == 'Purchase' else 'received'} (₹) *", min_value=0.0,
-                               value=round(total_due, 2), step=1000.0, key=_key(f, f"amt_{party}"))
-
-    left = amount
-    alloc = []
+    amount = c[2].number_input(f"Total amount {'paid' if kind == 'Purchase' else 'received'} (₹) *",
+                               min_value=0.0, value=0.0, step=1000.0, key=_key(f, f"amt_{party}"),
+                               help=f"Total due from the invoices below: ₹ {inr(total_due, 2)}")
+    auto_key = f"{f}_auto_{party}"
+    b = st.columns([1, 1, 3])
+    if b[0].button("↻ Adjust oldest first", key=_key(f, "auto"), help="Tick the oldest invoices until the total "
+                   "amount is used up"):
+        st.session_state[auto_key] = st.session_state.get(auto_key, 0) + 1
+    if b[1].button("✖ Clear ticks", key=_key(f, "clear")):
+        st.session_state[auto_key] = -abs(st.session_state.get(auto_key, 0)) - 1
+    auto = st.session_state.get(auto_key, 0)
+    left, ticks, amounts = amount, [], []
     for r in pb.itertuples():
-        take = min(left, r.outstanding)
+        take = min(left, r.outstanding) if auto > 0 else 0.0
         left -= take
-        alloc.append(round(take, 2))
-    table = pd.DataFrame({"Row": pb["source_row"].astype(int), "Bill No.": pb["bill_no"].astype(str),
-                          "Bill Date": pb["bill_date"], "Outstanding": pb["outstanding"].round(2),
-                          f"{name} now": alloc, "TDS": 0.0})
-    st.caption("Amount is spread over the oldest bills first. You can change the amounts or add TDS per bill.")
+        ticks.append(take > 0)
+        amounts.append(round(take, 2) if take and take < r.outstanding - 0.005 else None)
+    table = pd.DataFrame({"Adjust": ticks, "Bill No.": pb["bill_no"].astype(str), "Bill Date": pb["bill_date"],
+                          "Days": pb["days"], "Outstanding": pb["outstanding"].round(2),
+                          "Amount to adjust": amounts, "TDS": [None] * len(pb)})
     edited = st.data_editor(
-        table, hide_index=True, width="stretch", key=_key(f, f"alloc_{party}_{amount}"),
-        disabled=["Row", "Bill No.", "Bill Date", "Outstanding"],
-        column_config={"Row": st.column_config.NumberColumn("Sheet row", format="%d"),
+        table, hide_index=True, width="stretch", key=_key(f, f"alloc_{party}_{auto}_{amount if auto > 0 else ''}"),
+        disabled=["Bill No.", "Bill Date", "Days", "Outstanding"],
+        column_config={"Adjust": st.column_config.CheckboxColumn("✓ Adjust"),
                        "Bill Date": st.column_config.DateColumn(format="DD-MM-YYYY"),
+                       "Days": st.column_config.NumberColumn(format="%d"),
                        "Outstanding": st.column_config.NumberColumn(format="%.2f"),
-                       f"{name} now": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+                       "Amount to adjust": st.column_config.NumberColumn(
+                           min_value=0.0, format="%.2f", help="Leave empty to clear the invoice in full"),
                        "TDS": st.column_config.NumberColumn(min_value=0.0, format="%.2f")})
-    spread = float(edited[f"{name} now"].sum())
-    over = edited[edited[f"{name} now"] + edited["TDS"] > edited["Outstanding"] + 1]
+    alloc = []
+    for i, r in edited.iterrows():
+        tds = _f(r["TDS"])
+        amt = _f(r["Amount to adjust"])
+        if not amt and bool(r["Adjust"]):
+            amt = max(float(r["Outstanding"]) - tds, 0.0)
+        if amt or tds:
+            alloc.append({"row": int(pb.loc[i, "source_row"]), "bill": r["Bill No."], "amount": round(amt, 2),
+                          "tds": tds, "outstanding": float(r["Outstanding"])})
+    adjusted = sum(a["amount"] for a in alloc)
+    balance = round(amount - adjusted, 2)
+    m = st.columns(3)
+    m[0].metric(f"Total {name.lower()}", f"₹ {inr(amount, 2)}")
+    m[1].metric("Adjusted against invoices", f"₹ {inr(adjusted, 2)}")
+    m[2].metric("Balance", f"₹ {inr(balance, 2)}")
     problems = []
-    if amount > total_due + 1:
-        problems.append(f"Amount is more than the total due (₹ {inr(total_due, 2)}).")
-    if abs(spread - amount) > 0.5:
-        problems.append(f"₹ {inr(spread, 2)} is spread over bills but the amount is ₹ {inr(amount, 2)}.")
-    if not over.empty:
-        problems.append("Bill(s) " + ", ".join(over["Bill No."]) + " would be paid more than outstanding.")
+    advance = False
+    if balance < -0.5:
+        problems.append(f"Invoices ticked add up to ₹ {inr(adjusted, 2)}, more than the total ₹ {inr(amount, 2)}. "
+                        "Untick an invoice or type a smaller amount.")
+    elif balance > 0.5:
+        if alloc:
+            advance = st.checkbox(f"Keep the balance ₹ {inr(balance, 2)} as advance (on account) - it is added to "
+                                  f"invoice {alloc[-1]['bill']}", key=_key(f, "advance"))
+        if not advance:
+            problems.append(f"₹ {inr(balance, 2)} is not adjusted yet. Tick more invoices, or keep it as advance.")
+    over = [a["bill"] for a in alloc if a["amount"] + a["tds"] > a["outstanding"] + 1]
+    if over and not advance:
+        problems.append("Invoice(s) " + ", ".join(over) + " would be paid more than outstanding.")
     for p in problems:
         st.warning(p)
-    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save"), disabled=bool(problems) or amount <= 0):
-        allocations = [(int(r["Row"]), float(r[f"{name} now"]), float(r["TDS"])) for _, r in edited.iterrows()]
-        outstanding = {int(r["Row"]): float(r["Outstanding"]) for _, r in edited.iterrows()}
+    if st.button(f"💾 Save {name}", type="primary", key=_key(f, "save"),
+                 disabled=bool(problems) or amount <= 0 or not alloc):
+        if advance and balance > 0:
+            alloc[-1]["amount"] = round(alloc[-1]["amount"] + balance, 2)
+        allocations = [(a["row"], a["amount"], a["tds"]) for a in alloc]
+        outstanding = {a["row"]: a["outstanding"] for a in alloc}
         _save(f, lambda: master.add_settlement(kind, when, allocations, outstanding),
-              f"✅ {name} of ₹ {inr(amount, 2)} saved for {party}.")
+              f"✅ {name} of ₹ {inr(amount, 2)} saved for {party} against {len(alloc)} invoice(s).")

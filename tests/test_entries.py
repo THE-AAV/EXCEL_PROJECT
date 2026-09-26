@@ -229,7 +229,9 @@ def test_detailed_notes_flow_into_pnl_stock_and_ledgers(master):
         master.add_note_detailed("Purchase", row, {"qty": 5_000, "rate": 1})
 
     d = load_master(master.path)
-    assert d.debit_notes.iloc[0][["qty", "taxable", "gst", "other", "total"]].tolist() == [100, 10_000, 500, 50, 10_550]
+    dn = d.debit_notes
+    assert dn[["qty", "taxable", "gst", "other", "total"]].sum().tolist() == [100, 10_000, 500, 50, 10_550]
+    assert set(dn["note_no"]) == {"DN-0001"} and dn.iloc[1]["reason"] == "Expense: Other charges"
     assert d.credit_notes.iloc[0]["note_no"] == "MY-CN-1"
     assert d.purchase.set_index("source_row").loc[row, "sales_inv"] == "S-1"
     assert d.sales.set_index("source_row").loc[srow, "purchase_inv"] == "P-1"
@@ -248,3 +250,38 @@ def test_detailed_notes_flow_into_pnl_stock_and_ledgers(master):
     assert len(rs.po_detail) == 1 and rs.po_detail.iloc[0].days_open == 72
     wb = openpyxl.load_workbook(master.path)
     assert wb.sheetnames[-2:] == ["Debit Notes", "Credit Notes"] and wb["Notes"]["A1"].value == "keep me"
+
+
+def test_note_with_several_reasons_and_expenses(master):
+    row = master.add_invoice("Purchase", {"party": "S", "commodity": "Urad", "qty": 1_000, "rate": 100,
+                                          "bill_date": date(2026, 9, 1), "bill_no": "P-1"}, gst_pct=5)
+    no = master.add_note_detailed("Purchase", row, {
+        "date": date(2026, 9, 3),
+        "lines": [{"reason": "Weight shortage", "qty": 50, "rate": 100, "gst_pct": 5},
+                  {"reason": "Quality claim", "taxable": 2_000, "gst_pct": 5},
+                  {"reason": "Empty line"}],
+        "expenses": [{"type": "Freight", "amount": 300}, {"type": "Unloading / Loading", "amount": 120}]})
+    d = load_master(master.path)
+    dn = d.debit_notes
+    assert list(dn["reason"]) == ["Weight shortage", "Quality claim", "Expense: Freight", "Expense: Unloading / Loading"]
+    assert set(dn["note_no"]) == {no}
+    assert dn["total"].sum() == pytest.approx(5_000 * 1.05 + 2_000 * 1.05 + 420)
+    assert d.purchase.set_index("source_row").loc[row, "note"] == pytest.approx(7_770)
+    with pytest.raises(EntryError, match="more than"):
+        master.add_note_detailed("Purchase", row, {"lines": [{"qty": 600, "rate": 1}, {"qty": 600, "rate": 1}]})
+
+
+def test_batch_saves_all_or_nothing(master):
+    before = master.path.read_bytes()
+    with pytest.raises(EntryError):
+        with master.batch():
+            master.add_order("PO", {"date": date(2026, 9, 1), "party": "A", "commodity": "URAD", "qty_mt": 1, "rate": 1})
+            master.add_order("PO", {"date": date(2026, 9, 1), "party": "", "commodity": "URAD", "qty_mt": 1, "rate": 1})
+    assert master.path.read_bytes() == before and not master.read_log()
+    with master.batch():
+        for i in range(3):
+            master.add_order("SO", {"date": date(2026, 9, 1), "party": f"C{i}", "commodity": "URAD",
+                                    "qty_mt": 1, "rate": 1})
+    d = load_master(master.path)
+    assert d.so["contract_no"].tolist() == ["1", "2", "3", "4"]
+    assert len(list(master.backup_dir.iterdir())) == 1 and len(master.read_log()) == 3

@@ -12,6 +12,7 @@ import csv
 import os
 import re
 import shutil
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -41,19 +42,20 @@ FIXED_FORMULAS = {
 PRE_BILL_FIELDS = ["adhat", "amc", "labour", "transport_pre", "wh_load", "bags", "other_pre", "discount"]
 
 EXPENSE_FIELDS = {
+    # pre-bill expenses and the purchase discount are entered on the purchase invoice
     "Purchase": {
-        "Pre-bill expenses (added to cost)": ["adhat", "amc", "labour", "transport_pre", "wh_load", "bags",
-                                              "other_pre"],
-        "Deductions": ["discount", "vatav"],
         "Post-bill expenses": ["storage", "brokerage", "sampling", "repacking", "transport_post"],
+        "Deductions": ["vatav"],
     },
     "Sales": {
-        "Deductions": ["discount"],
         "Post-bill expenses": ["brokerage", "loading", "repacking"],
+        "Deductions": ["discount"],
     },
 }
 
-NOTE_REASONS = ["Goods returned", "Weight shortage", "Quality claim", "Rate difference", "Other"]
+NOTE_REASONS = ["Goods returned", "Weight shortage", "Quality claim", "Rate difference", "Moisture / dust",
+                "Bag weight difference", "Other"]
+NOTE_EXPENSES = ["Freight", "Unloading / Loading", "Handling", "Storage", "Brokerage", "Bank charges", "Other"]
 
 
 class EntryError(ValueError):
@@ -65,10 +67,29 @@ class MasterFile:
         self.path = Path(path)
         self.backup_dir = Path(backup_dir) if backup_dir else self.path.parent / "backups"
         self.log_path = Path(log_path) if log_path else self.path.parent / "activity_log.csv"
+        self._batch_book = None
+        self._pending_log = []
 
     # ---- helpers
     def _open(self):
-        return Book(self.path)
+        return self._batch_book if self._batch_book is not None else Book(self.path)
+
+    @contextmanager
+    def batch(self):
+        """Group several entries into one save: all of them are written, or (on any error) none are.
+        One backup is taken, so 'Undo last entry' undoes the whole batch."""
+        self._batch_book = Book(self.path)
+        self._pending_log = []
+        try:
+            yield self
+            book, self._batch_book = self._batch_book, None
+            backup(self.path, self.backup_dir)
+            book.save(self.path)
+            for entry in self._pending_log:
+                self._write_log(*entry)
+        finally:
+            self._batch_book = None
+            self._pending_log = []
 
     @staticmethod
     def _layout(book: Book, kind: str):
@@ -95,6 +116,12 @@ class MasterFile:
         return sh, hdr, cols, last, used
 
     def _log(self, action, sheet, row, party, amount, details=""):
+        if self._batch_book is not None:
+            self._pending_log.append((action, sheet, row, party, amount, details))
+        else:
+            self._write_log(action, sheet, row, party, amount, details)
+
+    def _write_log(self, action, sheet, row, party, amount, details=""):
         new = not self.log_path.exists()
         with self.log_path.open("a", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
@@ -104,6 +131,8 @@ class MasterFile:
                         round(float(amount or 0), 2), details])
 
     def _save(self, book: Book):
+        if book is self._batch_book:
+            return   # saved once when the batch ends
         backup(self.path, self.backup_dir)
         book.save(self.path)
 
@@ -266,31 +295,51 @@ class MasterFile:
         return self.add_note_detailed(kind, row, {"taxable": amount, "gst_pct": 0, "reason": "Other"})
 
     def add_note_detailed(self, kind: str, row: int, note: dict) -> str:
-        """Debit note (kind 'Purchase') / credit note (kind 'Sales') with quantity, tax and other charges.
+        """Debit note (kind 'Purchase') / credit note (kind 'Sales') against one bill.
 
-        note: note_no (None = automatic), date, qty (kg; 0 for amount-only notes), rate, taxable (defaults
-              to qty x rate), gst_pct, other (other charges / expenses), reason.
-        The note is listed in the 'Debit Notes' / 'Credit Notes' sheet, and its total is added to the
-        bill's 'Debit Note / Other de.' column, which reduces the party balance.
+        note: note_no (None = automatic), date, and either
+              lines:    [{reason, qty (kg), rate, taxable (defaults to qty x rate), gst_pct}, ...]  - one per reason
+              expenses: [{type, amount}, ...]                                                         - freight etc.
+        or, for a single reason, the line fields directly (reason, qty, rate, taxable, gst_pct, other).
+        Each reason and each expense is a row in the 'Debit Notes' / 'Credit Notes' sheet under the same note
+        number; the note total is added to the bill's 'Debit Note / Other de.' column (reduces the balance).
         """
-        qty = float(note.get("qty") or 0)
-        rate = float(note.get("rate") or 0)
-        taxable = float(note["taxable"]) if _filled(note.get("taxable")) else _round2(qty * rate)
-        gst_pct = float(note.get("gst_pct") or 0)
-        other = float(note.get("other") or 0)
-        if qty < 0 or taxable < 0 or other < 0 or gst_pct < 0:
-            raise EntryError("Amounts cannot be negative")
-        gst = _round2(taxable * gst_pct / 100)
-        total = _round2(taxable + gst + other)
-        if total <= 0:
-            raise EntryError("Enter a quantity and rate, or an amount")
+        lines = note.get("lines")
+        expenses = list(note.get("expenses") or [])
+        if lines is None:
+            lines = [{k: note.get(k) for k in ("reason", "qty", "rate", "taxable", "gst_pct")}]
+            if note.get("other"):
+                expenses.append({"type": "Other charges", "amount": note["other"]})
+        rows = []
+        for i, ln in enumerate(lines, 1):
+            qty = float(ln.get("qty") or 0)
+            rate = float(ln.get("rate") or 0)
+            taxable = float(ln["taxable"]) if _filled(ln.get("taxable")) else _round2(qty * rate)
+            gst_pct = float(ln.get("gst_pct") or 0)
+            if qty < 0 or taxable < 0 or gst_pct < 0:
+                raise EntryError(f"Reason {i}: amounts cannot be negative")
+            if taxable == 0 and qty == 0:
+                continue
+            rows.append({"reason": ln.get("reason") or "Other", "qty": qty, "rate": rate, "taxable": taxable,
+                         "gst_pct": gst_pct, "gst": _round2(taxable * gst_pct / 100), "other": 0.0})
+        for i, ex in enumerate(expenses, 1):
+            amt = float(ex.get("amount") or 0)
+            if amt < 0:
+                raise EntryError(f"Expense {i}: amount cannot be negative")
+            if amt:
+                rows.append({"reason": f"Expense: {ex.get('type') or 'Other'}", "qty": 0.0, "rate": 0.0,
+                             "taxable": 0.0, "gst_pct": 0.0, "gst": 0.0, "other": amt})
+        total = _round2(sum(r["taxable"] + r["gst"] + r["other"] for r in rows))
+        if not rows or total <= 0:
+            raise EntryError("Enter at least one reason with a quantity and rate or an amount, or an expense")
+        qty_total = sum(r["qty"] for r in rows)
 
         book = self._open()
         sh, hdr, cols, last, used = self._layout(book, kind)
         _check_row(row, used)
         bill_qty = sh.value(f"{cols['qty']}{row}") or 0
-        if qty > bill_qty + 0.001:
-            raise EntryError(f"Quantity {qty:g} kg is more than the {bill_qty:g} kg on the bill")
+        if qty_total > bill_qty + 0.001:
+            raise EntryError(f"Quantity {qty_total:g} kg is more than the {bill_qty:g} kg on the bill")
         head_cell = sh.cells.get(f"{cols['party']}{hdr}")
         reg = book.add_sheet(NOTE_SHEETS[kind], list(NOTE_COLUMNS.values()),
                              header_style=head_cell.get("s") if head_cell is not None else None)
@@ -304,24 +353,28 @@ class MasterFile:
             note_no = next_number(existing, "DN-0001" if kind == "Purchase" else "CN-0001")
         party = sh.value(f"{cols['party']}{row}")
         bill_no = _text(sh.value(f"{cols['bill_no']}{row}"))
-        r = max(reg.rows) + 1
-        values = [note_no, note.get("date") or date.today(), party, bill_no, row,
-                  sh.value(f"{cols['commodity']}{row}"), qty, rate, taxable, gst_pct]
-        for col, v in zip("ABCDEFGHIJ", values):
-            reg.set(f"{col}{r}", v)
-        reg.set_formula(f"K{r}", f"ROUND(I{r}*J{r}/100,2)")
-        reg.set(f"L{r}", other)
-        reg.set_formula(f"M{r}", f"I{r}+K{r}+L{r}")
-        reg.set(f"N{r}", note.get("reason") or "")
-        reg.recalc_row(r)
+        product = sh.value(f"{cols['commodity']}{row}")
+        when = note.get("date") or date.today()
+        r = max(reg.rows)
+        for ln in rows:
+            r += 1
+            for col, v in zip("ABCDEFGHIJ", [note_no, when, party, bill_no, row, product, ln["qty"], ln["rate"],
+                                             ln["taxable"], ln["gst_pct"]]):
+                reg.set(f"{col}{r}", v)
+            reg.set_formula(f"K{r}", f"ROUND(I{r}*J{r}/100,2)")
+            reg.set(f"L{r}", ln["other"])
+            reg.set_formula(f"M{r}", f"I{r}+K{r}+L{r}")
+            reg.set(f"N{r}", ln["reason"])
+            reg.recalc_row(r)
 
         ref = f"{cols['note']}{row}"
         sh.set(ref, _round2((sh.value(ref) or 0) + total))
         sh.recalc_row(row)
         self._save(book)
         self._log("Debit Note" if kind == "Purchase" else "Credit Note", sh.name, row, party, total,
-                  f"{note_no} on bill {bill_no}: {qty:g} kg, taxable {taxable:,.2f}, GST {gst:,.2f}, "
-                  f"other {other:,.2f} ({note.get('reason') or '-'})")
+                  f"{note_no} on bill {bill_no}: " + "; ".join(
+                      f"{x['reason']} " + (f"{x['qty']:g} kg " if x["qty"] else "")
+                      + f"₹{x['taxable'] + x['gst'] + x['other']:,.2f}" for x in rows))
         return note_no
 
     # ---- expenses, payments
