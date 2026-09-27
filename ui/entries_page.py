@@ -15,7 +15,7 @@ from mis_reports.entries import (EXPENSE_FIELDS, NOTE_EXPENSES, NOTE_REASONS, En
                                  restore_latest_backup)
 from mis_reports.xlsx_edit import FileLockedError
 
-from . import table_entry
+from . import choices, table_entry
 from .common import inr, show_table
 
 STEPS = ["Purchase Order", "Purchase Invoice", "Debit Note", "Expenses", "Payment",
@@ -40,20 +40,13 @@ def _reset(form: str):
     st.session_state["nonce"][form] = st.session_state["nonce"].get(form, 0) + 1
 
 
-def _options(*series) -> list[str]:
-    vals = set()
-    for s in series:
-        vals.update(str(v).strip() for v in pd.Series(s).dropna() if str(v).strip())
-    return sorted(vals, key=str.lower)
+def _options(*series, field=None) -> list[str]:
+    return choices.options(field, *series)
 
 
-def _pick(label, options, key, default=None, required=False, help=None):
-    """Dropdown that also accepts a new value typed by the user."""
-    opts = list(options)
-    if default and default not in opts:
-        opts = [default] + opts
-    return st.selectbox(label + (" *" if required else ""), opts, index=opts.index(default) if default else None,
-                        key=key, accept_new_options=True, placeholder="Choose or type a new one", help=help)
+def _pick(label, options, key, default=None, required=False, help=None, field=None):
+    """Dropdown of the names in the sheet with a '➕ Add new…' choice for a name that is not there yet."""
+    return choices.pick(label, options, key, default=default, required=required, help=help, field=field)
 
 
 def _last_for(df: pd.DataFrame, col: str, value) -> dict:
@@ -209,30 +202,39 @@ def _order_form(kind: str, data, master: MasterFile):
     contract_no, number_ok = _number_field(f, "Contract No.", df["contract_no"] if len(df) else [])
     c = st.columns(3)
     with c[0]:
-        party = _pick("Party", _options(bills["party"], df.get("party")), _key(f, "party"), required=True)
-    prev = _last_for(bills, "party", party)
+        party = _pick("Party", _options(bills["party"], df.get("party"), field=f"party:{side}"), _key(f, "party"),
+                      required=True, field=f"party:{side}")
+    prev = _last_for(bills, "party", party) or _last_for(df, "party", party)
     with c[1]:
-        product = _pick("Product", _options(bills["commodity"], df.get("commodity")), _key(f, "product"),
-                        required=True)
+        product = _pick("Product", _options(bills["commodity"], df.get("commodity"), field="product"),
+                        _key(f, "product"), required=True, field="product")
     with c[2]:
-        broker = _pick("Broker", _options(bills["broker"], df.get("broker")), _key(f, f"broker_{party}"),
-                       default=prev.get("broker"))
+        broker = _pick("Broker", _options(bills["broker"], df.get("broker"), field="broker"),
+                       _key(f, f"broker_{party}"), default=prev.get("broker"), field="broker")
     c = st.columns(3)
     when = c[0].date_input("Order date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
     qty = c[1].number_input("Quantity (MT) *", min_value=0.0, step=1.0, key=_key(f, "qty"))
     rate = c[2].number_input("Rate (₹ per kg) *", min_value=0.0, step=0.25, key=_key(f, "rate"))
     c = st.columns(3)
     delivery = c[0].date_input("Delivery date", None, key=_key(f, "delivery"), format="DD/MM/YYYY")
-    place = c[1].text_input("Delivery place", key=_key(f, "place"))
-    packing = c[2].text_input("Packing", key=_key(f, "packing"))
+    with c[1]:
+        place = _pick("Delivery place", _options(df.get("delivery_place"), field="place"), _key(f, "place"),
+                      field="place")
+    with c[2]:
+        packing = _pick("Packing", _options(df.get("packing"), field="packing"), _key(f, "packing"),
+                        field="packing")
     with st.expander("More details (optional)"):
         c = st.columns(3)
+        companies = _options(bills["company"], df.get("company"), field="company")
         with c[0]:
-            company = _pick("Company", _options(bills["company"]), _key(f, "company"),
-                            default=prev.get("company") or (_options(bills["company"]) or [None])[0])
+            company = _pick("Company", companies, _key(f, f"company_{party}"),
+                            default=prev.get("company") or (companies or [None])[0], field="company")
         with c[1]:
-            warehouse = _pick("Warehouse", _options(bills["warehouse"]), _key(f, "wh"))
-        branch = c[2].text_input("Branch", value=prev.get("branch") or "", key=_key(f, f"branch_{party}"))
+            warehouse = _pick("Warehouse", _options(bills["warehouse"], df.get("warehouse"), field="warehouse"),
+                              _key(f, f"wh_{party}"), default=prev.get("warehouse"), field="warehouse")
+        with c[2]:
+            branch = _pick("Branch", _options(bills["branch"], df.get("branch"), field="branch"),
+                           _key(f, f"branch_{party}"), default=prev.get("branch"), field="branch")
     st.markdown(f"<div class='preview'>Order value: <b>₹ {inr(qty * 1000 * rate)}</b> "
                 f"({qty:g} MT × 1000 × ₹{rate:g}/kg)</div>", unsafe_allow_html=True)
     if st.button(f"💾 Save {side} Order", type="primary", key=_key(f, "save"), disabled=not number_ok):
@@ -276,7 +278,8 @@ def _invoice_form(kind: str, data, master: MasterFile):
     # ---- bill header
     c = st.columns(3)
     with c[0]:
-        party = _pick("Party", _options(df["party"], all_orders.get("party")), _key(f, "party"), required=True)
+        party = _pick("Party", _options(df["party"], all_orders.get("party"), field=f"party:{kind}"), _key(f, "party"),
+                      required=True, field=f"party:{kind}")
     prev = _last_for(df, "party", party)
     pk = f"{f}_{party}"   # party-dependent defaults refill when the party changes
     if purchase:
@@ -318,7 +321,8 @@ def _invoice_form(kind: str, data, master: MasterFile):
                 lk = f"{f}_{i}_{order_labels.index(link)}"   # refill defaults when the contract changes
                 c = st.columns([3, 2, 2])
                 with c[0]:
-                    product = _pick("Product", _options(df["commodity"]), _key(lk, "product"), required=True,
+                    product = _pick("Product", _options(df["commodity"], field="product"), _key(lk, "product"),
+                                    required=True, field="product",
                                     default=_match(order["commodity"], df["commodity"]) if order is not None else None)
                 qty = c[1].number_input("Weight (kg) *", min_value=0.0, step=10.0, key=_key(lk, "qty"),
                                         value=float(order["bal_qty_mt"] * 1000) if order is not None else 0.0)
@@ -362,20 +366,25 @@ def _invoice_form(kind: str, data, master: MasterFile):
     with tabs[-1]:
         c = st.columns(3)
         with c[0]:
-            company = _pick("Company", _options(df["company"]), _key(pk, "company"),
-                            default=prev.get("company") or (_options(df["company"]) or [None])[0])
+            companies = _options(df["company"], field="company")
+            company = _pick("Company", companies, _key(pk, "company"),
+                            default=prev.get("company") or (companies or [None])[0], field="company")
         with c[1]:
-            typ = _pick("Type", _options(df["type"]) or ["Local", "Import"], _key(pk, "type"),
-                        default=prev.get("type") or "Local")
+            typ = _pick("Type", _options(df["type"], ["Local", "Import"], field="type"), _key(pk, "type"),
+                        default=prev.get("type") or "Local", field="type")
         with c[2]:
-            sub = _pick("Sub Type", _options(df["sub_type"]), _key(pk, "sub"), default=prev.get("sub_type"))
+            sub = _pick("Sub Type", _options(df["sub_type"], field="sub_type"), _key(pk, "sub"),
+                        default=prev.get("sub_type"), field="sub_type")
         c = st.columns(3)
         with c[0]:
-            broker = _pick("Broker", _options(df["broker"]), _key(pk, "broker"), default=prev.get("broker"))
+            broker = _pick("Broker", _options(df["broker"], field="broker"), _key(pk, "broker"),
+                           default=prev.get("broker"), field="broker")
         with c[1]:
-            warehouse = _pick("Warehouse", _options(df["warehouse"]), _key(pk, "wh"), default=prev.get("warehouse"))
+            warehouse = _pick("Warehouse", _options(df["warehouse"], field="warehouse"), _key(pk, "wh"),
+                              default=prev.get("warehouse"), field="warehouse")
         gstin = c[2].text_input("Party GSTIN", value=prev.get("gstin") or "", key=_key(pk, "gstin"))
-        branch = st.text_input("Branch", value=prev.get("branch") or "", key=_key(pk, "branch"))
+        branch = _pick("Branch", _options(df["branch"], field="branch"), _key(pk, "branch"),
+                       default=prev.get("branch"), field="branch")
 
     # ---- preview
     values = [l["qty"] * l["rate"] for l in lines]
@@ -428,6 +437,8 @@ def _choose_bill(kind: str, data, key_prefix: str):
         party = st.selectbox("Party *", _options(df["party"]), index=None, key=_key(key_prefix, "party"),
                              placeholder="Choose party")
     if not party:
+        st.caption("A new party first needs a bill: enter it under "
+                   + ("② Purchase Invoice" if kind == "Purchase" else "⑦ Sales Invoice") + ".")
         return None
     bills = df[df["party"] == party].sort_values("bill_date", na_position="first")
     if bills.empty:
@@ -464,12 +475,13 @@ def _note_form(kind: str, data, master: MasterFile):
     bk = f"{f}_{int(bill['source_row'])}"   # tables refill when another bill is chosen
     when = st.date_input("Note date *", date.today(), key=_key(f, "date"), format="DD/MM/YYYY")
 
+    choices.add_new_box(f"{f}_names", {"reason": (NOTE_REASONS,), "expense": (NOTE_EXPENSES,)})
     st.markdown("**Reasons** - one line each. Leave *Amount* empty to use quantity × rate.")
     reasons = st.data_editor(
         pd.DataFrame([{"Reason": NOTE_REASONS[0], "Qty (kg)": None, "Rate (₹/kg)": bill_rate,
                        "Amount excl. GST (₹)": None, "GST %": bill_gst}]),
         num_rows="dynamic", hide_index=True, width="stretch", key=_key(bk, "reasons"),
-        column_config={"Reason": st.column_config.SelectboxColumn(options=NOTE_REASONS, required=True),
+        column_config={"Reason": st.column_config.SelectboxColumn(options=_note_list("reason"), required=True),
                        "Qty (kg)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
                        "Rate (₹/kg)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
                        "Amount excl. GST (₹)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
@@ -479,7 +491,7 @@ def _note_form(kind: str, data, master: MasterFile):
     expenses = st.data_editor(
         pd.DataFrame([{"Expense": NOTE_EXPENSES[0], "Amount (₹)": None}]), num_rows="dynamic", hide_index=True,
         width="stretch", key=_key(bk, "expenses"),
-        column_config={"Expense": st.column_config.SelectboxColumn(options=NOTE_EXPENSES, required=True),
+        column_config={"Expense": st.column_config.SelectboxColumn(options=_note_list("expense"), required=True),
                        "Amount (₹)": st.column_config.NumberColumn(min_value=0.0, format="%.2f")})
 
     lines, preview = [], []
@@ -521,6 +533,12 @@ def _note_form(kind: str, data, master: MasterFile):
                                      "qty": "Qty (kg)", "taxable": "Value", "gst": "GST", "other": "Expense",
                                      "total": "Total"}),
                    money=["Qty (kg)", "Value", "GST", "Expense", "Total"], dates=["Date"])
+
+
+def _note_list(field: str) -> list[str]:
+    """The standard note reasons / expenses, then any the user added."""
+    base = NOTE_REASONS if field == "reason" else NOTE_EXPENSES
+    return base + [n for n in choices.added(field) if n.lower() not in {b.lower() for b in base}]
 
 
 def _f(v) -> float:
@@ -577,6 +595,8 @@ def _settlement_form(kind: str, data, master: MasterFile, ledger: R.Ledger):
     party = c[0].selectbox("Party *", sorted(parties, key=str.lower), index=None, key=_key(f, "party"),
                            placeholder="Choose party", format_func=lambda p: f"{p}  (due ₹ {inr(due[p])})")
     if not party:
+        st.caption("Only parties with an unpaid bill are listed. A new party first needs a bill: enter it under "
+                   + ("② Purchase Invoice" if kind == "Purchase" else "⑦ Sales Invoice") + ".")
         return
     pb = bills[bills["party"] == party].sort_values("bill_date", na_position="first").reset_index(drop=True)
     total_due = float(pb["outstanding"].sum())

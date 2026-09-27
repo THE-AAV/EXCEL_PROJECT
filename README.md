@@ -54,9 +54,22 @@ Pick a step at the top, then an **Entry style**:
   the same bill with the same note no. (or date) become one note; in the payment / receipt tables, rows with
   the same party and date become one payment. Party and product names are matched to the spelling already
   in the sheet (capital letters and spaces don't matter), and new names are listed before saving.
+  The tables have the same fields as the forms. Name columns (party, product, broker, company, warehouse,
+  type, branch ...) are **dropdowns of the names already in the sheet**; add a new one with **➕ Add a new …**
+  above the table (one per line, so a list pasted from Excel works), or turn on **✍️ Type names freely** to
+  type or paste names straight into the cells. Details left empty are filled in the way the form suggests
+  them: from the contract picked (party, product, balance quantity, rate) and from the party's last entry
+  (broker, company, type, sub type, warehouse, GSTIN, branch); an empty GST % is 5% (0% for Import). The
+  preview above the Save button shows what will be written.
 
 In the form style:
-Dropdowns list the names already in the sheet. You can also type a new name.
+Dropdowns list the names already in the sheet. Every name dropdown (party, product, broker, company,
+warehouse, type, sub type, branch, delivery place, packing) starts with **➕ Add new…**: pick it and type
+the new name in the box that appears (typing a new name straight into the dropdown works too). Note reasons
+and note expenses can be extended with **➕ Add a new note reason / note expense**. Names added in one place
+show up in the other dropdowns and tables for the rest of the session, and are in the sheet for good once an
+entry using them is saved. Debit / credit notes, expenses and payments / receipts work on existing bills, so
+a new party is entered through its invoice first.
 
 | Step | What it does in the Master Sheet |
 |---|---|
