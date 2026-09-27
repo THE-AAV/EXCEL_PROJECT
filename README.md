@@ -29,6 +29,41 @@ You can keep using Excel as well. Changes saved in Excel show up in the app with
 
 ---
 
+## Web app with logins (new, Phase 1)
+
+A multi-user version of the reports runs as a website: people sign in with their own user ID and password, the
+data lives in a PostgreSQL database instead of one Excel file, and the reports are worked out from the database with
+the same calculations as above (the tests check that the numbers match the Excel file exactly).
+
+| Role | Can do |
+|---|---|
+| **admin** | Everything: import the Master Sheet, add / switch off users, reset passwords, product names, audit log |
+| **editor** | See every report (entering transactions in the web app comes in Phase 2) |
+| **viewer** | Read-only: dashboard, reports, downloads |
+
+**Getting data in:** an admin opens **Import**, uploads the Master Sheet and sees what was found (rows per sheet,
+new parties and products, rows with a missing date / quantity / amount) before anything is saved. **Confirm** makes it
+the data behind every report. Each import replaces the previous one, which stays in the list and can be **restored**.
+
+**Running it on a server** (Docker):
+```bash
+cp .env.example .env          # put two long random values in it
+docker compose up -d --build  # starts PostgreSQL and the app on port 8000
+```
+Open `http://<server>:8000`; the first visit asks you to create the admin account. Put it behind HTTPS (for example
+Caddy or nginx) before using it over the internet, then set `SECURE_COOKIES=1` in `.env`.
+
+Useful commands (inside the app container: `docker compose exec app ...`):
+```bash
+python -m server.manage add-user <id> --role admin|editor|viewer   # asks for the password
+python -m server.manage reset-password <id>
+python -m server.manage import "Master Sheet.xlsx"                  # import without the web page
+```
+
+The Streamlit app below keeps working unchanged while the web app grows.
+
+---
+
 ## For everyday users
 
 ### First-time setup (once per computer)
@@ -174,6 +209,26 @@ config/product_aliases.csv    product name mapping
 tests/                  pytest suite (builds its own small Master Sheet, no real data needed)
 ```
 
+Web app (backend in `server/`, pages in `web/`):
+```
+server/main.py          FastAPI routes: sign-in, users, imports, reports, product names, audit log
+server/auth.py          bcrypt passwords, signed session cookie, lockout after wrong passwords, role checks
+server/db.py            database tables (one per Master Sheet sheet, plus users, imports, audit log)
+server/store.py         Master Sheet data <-> database; rebuilds the loader's tables for the report code
+server/imports.py       upload -> preview -> confirm / discard / restore
+server/reports_api.py   runs mis_reports on the database data, caches results, turns them into JSON
+web/                    React + AG Grid pages (npm run dev, npm run build -> web/dist, served by the backend)
+tests/test_server.py    roles, sign-in, import and "database reports equal file reports"
+```
+
+```bash
+pip install -r requirements-server.txt pytest httpx
+uvicorn server.main:create_app --factory --reload           # backend on :8000 (SQLite in ./data by default)
+cd web && npm install && npm run dev                         # pages on :5173, calls the backend
+TEST_DATABASE_URL=postgresql+psycopg://user@host/db python -m pytest tests/test_server.py   # on PostgreSQL
+```
+
+Streamlit app:
 ```bash
 pip install -r requirements.txt pytest
 python -m pytest -q
