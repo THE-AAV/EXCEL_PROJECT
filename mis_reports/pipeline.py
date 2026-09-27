@@ -57,7 +57,11 @@ def run_reports(source, filters: R.Filters | None = None, data: MasterData | Non
     f = filters or R.Filters()
     if not f.aliases:
         f.aliases = load_aliases()
-    data = data or load_master(source)
+    return build_reports(data or load_master(source), f)
+
+
+def build_reports(data: MasterData, f: R.Filters) -> ReportSet:
+    """Every report for data already loaded; f.aliases is used as given."""
     pnl = R.product_pnl(data, f)
     return ReportSet(data, f, pnl, R.creditors(data, f), R.debtors(data, f),
                      R.open_orders(data, f), R.data_checks(data, f), R.stock_summary(data, f, pnl),
