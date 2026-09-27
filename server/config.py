@@ -21,6 +21,14 @@ def _secret(data_dir: Path) -> str:
     return path.read_text().strip()
 
 
+def normalize_database_url(url: str) -> str:
+    """Hosting services hand out postgres://... addresses; SQLAlchemy needs to be told to use psycopg."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 @dataclass
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("DATA_DIR", BASE / "data")))
@@ -30,12 +38,16 @@ class Settings:
     max_failed_logins: int = int(os.environ.get("MAX_FAILED_LOGINS", "5"))
     lockout_minutes: int = int(os.environ.get("LOCKOUT_MINUTES", "15"))
     secure_cookies: bool = os.environ.get("SECURE_COOKIES", "0") == "1"
+    # optional: creates this admin on a brand-new installation (used by the Render set-up)
+    admin_username: str = os.environ.get("ADMIN_USERNAME", "admin")
+    admin_password: str = os.environ.get("ADMIN_PASSWORD", "")
 
     def __post_init__(self):
         self.data_dir = Path(self.data_dir)
         # PostgreSQL in production (DATABASE_URL=postgresql+psycopg://...); a local SQLite file otherwise
         self.database_url = self.database_url or os.environ.get("DATABASE_URL") or \
             f"sqlite:///{self.data_dir / 'business.db'}"
+        self.database_url = normalize_database_url(self.database_url)
         self.secret_key = self.secret_key or _secret(self.data_dir)
 
     @property

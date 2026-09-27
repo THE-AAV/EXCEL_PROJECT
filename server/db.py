@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, MetaData, String, Table,
-                        Text, create_engine, event, select)
+from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, LargeBinary, MetaData, String,
+                        Table, Text, create_engine, event, inspect, select, text)
 from sqlalchemy.engine import Engine
 
 from mis_reports.loader import (DATE_FIELDS, NOTE_COLUMNS, ORDER_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS,
@@ -57,6 +57,13 @@ import_batches = Table(
     Column("confirmed_at", DateTime),
 )
 
+# the uploaded workbooks themselves, kept in the database so the server needs no disk of its own
+import_files = Table(
+    "import_files", metadata,
+    Column("batch_id", Integer, ForeignKey("import_batches.id"), primary_key=True),
+    Column("content", LargeBinary, nullable=False),
+)
+
 audit_log = Table(
     "audit_log", metadata,
     Column("id", Integer, primary_key=True),
@@ -99,6 +106,8 @@ def _txn_table(name: str, fields: dict) -> Table:
         Column("batch_id", Integer, ForeignKey("import_batches.id"), index=True),
         Column("source_row", Integer, nullable=False),
         *[_field_column(f) for f in fields],
+        # the sheet's other columns (BL No, Exg Rate, Storage Out Date ...) as {header: value}
+        Column("extra", JSON),
     )
 
 
@@ -128,7 +137,17 @@ def make_engine(url: str) -> Engine:
 def init_db(engine: Engine, alias_seed: dict | None = None) -> None:
     """Create missing tables; on a fresh database copy the product name mapping from the CSV file."""
     metadata.create_all(engine)
+    _add_missing_columns(engine)
     with engine.begin() as conn:
         if alias_seed and conn.execute(select(product_aliases).limit(1)).first() is None:
             conn.execute(product_aliases.insert(),
                          [{"name_in_sheet": k, "report_as": v} for k, v in alias_seed.items()])
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Columns added after a database was first created (create_all only makes missing tables)."""
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, _ in TXN.values():
+            if "extra" not in {c["name"] for c in insp.get_columns(table.name)}:
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN extra JSON"))

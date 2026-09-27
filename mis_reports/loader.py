@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import pandas as pd
 
@@ -204,8 +205,17 @@ def _read_table(xls: pd.ExcelFile, sheet: str, columns: dict, marker: str,
             if required is None or fld in required:
                 problems.append(f"{sheet}: column '{header}' not found - treated as blank")
 
+    # every other column (BL No, Exg Rate, Storage Out Date ...) is kept as-is, so nothing typed is lost
+    known = {_norm(h) for h in columns.values()}
+    others = [(i, str(raw.iloc[hdr, i]).strip()) for i, h in enumerate(headers)
+              if h and h != "nan" and h not in known]
+    out["_extra"] = [{name: v for i, name in others if (v := _plain(body.iat[r, i])) is not None}
+                     for r in range(len(body))]
+
     out = out[out[key_field].notna() & (out[key_field].astype(str).str.strip() != "")]
     for fld in out.columns:
+        if fld == "_extra":
+            continue
         if fld in TEXT_FIELDS:
             out[fld] = out[fld].where(out[fld].isna(), out[fld].astype(str).str.strip())
         elif fld in DATE_FIELDS:
@@ -213,6 +223,20 @@ def _read_table(xls: pd.ExcelFile, sheet: str, columns: dict, marker: str,
         elif fld != "source_row":
             out[fld] = pd.to_numeric(out[fld], errors="coerce")
     return out.reset_index(drop=True)
+
+
+def _plain(v):
+    """A JSON-friendly copy of a cell value: None for blanks, dates as 'YYYY-MM-DD'."""
+    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
+        return None
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return v.strftime("%Y-%m-%d") if v == v.replace(hour=0, minute=0, second=0, microsecond=0) \
+            else v.strftime("%Y-%m-%dT%H:%M:%S")
+    if hasattr(v, "item"):
+        v = v.item()
+    if isinstance(v, str):
+        return v if v.strip() else None
+    return v
 
 
 def _as_date(v):
@@ -232,14 +256,15 @@ def _complete_purchase(df: pd.DataFrame) -> pd.DataFrame:
     _fill(df, "amount", df["qty"] * df["rate"])
     _fill(df, "pre_exp", df[PURCHASE_PRE_PARTS].sum(axis=1, min_count=1))
     _fill(df, "net_amount", df["amount"].fillna(0) + df["pre_exp"].fillna(0) - df["discount"].fillna(0))
-    _fill(df, "bill_amt", df["net_amount"] + df["gst"].fillna(0))
+    _fill(df, "bill_amt", df["amount"] + df["gst"].fillna(0))  # Master Sheet: Bill Amt = Amount + GST
     _fill(df, "final_amt", df["bill_amt"] - df["vatav"].fillna(0))
     _fill(df, "post_exp", df[PURCHASE_POST_PARTS].sum(axis=1, min_count=1))
     return df
 
 
 def _complete_sales(df: pd.DataFrame) -> pd.DataFrame:
-    _fill(df, "amount", df["qty"] * df["rate"])
+    # Master Sheet: Amount before GST = BILL WEIGHT x RATE
+    _fill(df, "amount", df["bill_weight"].where(df["bill_weight"].notna(), df["qty"]) * df["rate"])
     _fill(df, "net_amount", df["amount"] - df["discount"].fillna(0))
     _fill(df, "bill_amt", df["amount"] + df["gst"].fillna(0))
     _fill(df, "post_exp", df[SALES_POST_PARTS].sum(axis=1, min_count=1))
@@ -263,35 +288,79 @@ def _read_opening(xls: pd.ExcelFile) -> tuple[dict, dict]:
     return cred, debt
 
 
+# other names people give the same sheets (compared lower-case, without spaces or punctuation)
+SHEET_NAMES = {
+    "Purchase": {"purchase", "purchases", "purchasebills", "purchaseregister", "purchaseinvoices"},
+    "Sales": {"sales", "sale", "salesbills", "salesregister", "salesinvoices"},
+    "PO": {"po", "pos", "purchaseorder", "purchaseorders", "purchasecontracts"},
+    "SO": {"so", "sos", "salesorder", "salesorders", "salescontracts"},
+    "Debit Notes": {"debitnotes", "debitnote", "dn"},
+    "Credit Notes": {"creditnotes", "creditnote", "cn"},
+}
+
+
+def _key(name) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+
+def find_sheets(xls: pd.ExcelFile) -> dict:
+    """Which sheet holds what: {'Purchase': 'Purchase', 'Sales': 'sales bills', ...}.
+    Names are matched loosely; a purchase / sales sheet with another name is recognised by its headers
+    (PARTY NAME with WEIGHT for purchases, with WH Weight for sales)."""
+    found = {}
+    for sheet in xls.sheet_names:
+        for kind, names in SHEET_NAMES.items():
+            if kind not in found and _key(sheet) in names:
+                found[kind] = sheet
+    for kind, header in (("Purchase", "WEIGHT"), ("Sales", "WH Weight")):
+        if kind in found:
+            continue
+        for sheet in xls.sheet_names:
+            if sheet in found.values():
+                continue
+            top = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=15)
+            cells = {_norm(v) for v in top.to_numpy().ravel() if pd.notna(v)}
+            if _norm("PARTY NAME") in cells and _norm(header) in cells:
+                found[kind] = sheet
+                break
+    return found
+
+
+def _empty(columns: dict) -> pd.DataFrame:
+    return pd.DataFrame(columns=["source_row", *columns, "_extra"])
+
+
 def load_master(source) -> MasterData:
     """source: a file path or file-like object for the Master Sheet workbook."""
     problems: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # openpyxl warns about data-validation extensions
         xls = pd.ExcelFile(source, engine="openpyxl")
-        missing = [s for s in ("Purchase", "Sales") if s not in xls.sheet_names]
+        found = find_sheets(xls)
+        missing = [s for s in ("Purchase", "Sales") if s not in found]
         if missing:
             raise ValueError(f"Workbook is missing required sheet(s): {', '.join(missing)}")
 
         purchase = _complete_purchase(
-            _read_table(xls, "Purchase", PURCHASE_COLUMNS, "PARTY NAME", "party", problems))
+            _read_table(xls, found["Purchase"], PURCHASE_COLUMNS, "PARTY NAME", "party", problems))
         sales = _complete_sales(
-            _read_table(xls, "Sales", SALES_COLUMNS, "PARTY NAME", "party", problems))
+            _read_table(xls, found["Sales"], SALES_COLUMNS, "PARTY NAME", "party", problems))
 
         orders = {}
         for sheet in ("PO", "SO"):
-            if sheet in xls.sheet_names:
-                df = _read_table(xls, sheet, ORDER_COLUMNS, "Contract No", "commodity", problems, ORDER_REQUIRED)
+            if sheet in found:
+                df = _read_table(xls, found[sheet], ORDER_COLUMNS, "Contract No", "commodity", problems,
+                                 ORDER_REQUIRED)
                 orders[sheet] = df[df["qty_mt"].notna()].reset_index(drop=True)
             else:
-                orders[sheet] = pd.DataFrame(columns=["source_row", *ORDER_COLUMNS])
+                orders[sheet] = _empty(ORDER_COLUMNS)
         opening_c, opening_d = _read_opening(xls)
         notes = {}
         for kind, sheet in NOTE_SHEETS.items():
-            if sheet in xls.sheet_names:
-                notes[kind] = _read_table(xls, sheet, NOTE_COLUMNS, "Note No", "party", problems)
+            if sheet in found:
+                notes[kind] = _read_table(xls, found[sheet], NOTE_COLUMNS, "Note No", "party", problems)
             else:
-                notes[kind] = pd.DataFrame(columns=["source_row", *NOTE_COLUMNS])
+                notes[kind] = _empty(NOTE_COLUMNS)
 
     if purchase[["qty", "amount"]].isna().all().all() and len(purchase):
         problems.append("Purchase sheet has no calculated amounts - open and save the file in Excel first")

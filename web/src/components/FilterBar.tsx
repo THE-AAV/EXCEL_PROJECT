@@ -6,6 +6,7 @@ import MultiSelect from "./MultiSelect";
 export default function FilterBar() {
   const { filters, setFilters, status, filterQuery, loading } = useData();
   const [busy, setBusy] = useState(false);
+  const [sheetBusy, setSheetBusy] = useState(false);
   const o = status?.options;
   const set = (patch: Partial<typeof filters>) => setFilters({ ...filters, ...patch });
 
@@ -45,6 +46,17 @@ export default function FilterBar() {
             }
           }}>
           {busy ? "Preparing…" : "Download all reports (Excel)"}
+        </button>
+        <button className="secondary" disabled={sheetBusy} title="Your Master Sheet with every bill, order and formula"
+          onClick={async () => {
+            setSheetBusy(true);
+            try {
+              await download("/master-sheet", "Master Sheet.xlsx");
+            } finally {
+              setSheetBusy(false);
+            }
+          }}>
+          {sheetBusy ? "Preparing…" : "Download Master Sheet"}
         </button>
       </div>
     </div>

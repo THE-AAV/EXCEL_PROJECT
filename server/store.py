@@ -44,10 +44,12 @@ def replace_all(conn: Connection, data: MasterData, batch_id: int) -> None:
             continue
         cols = ["source_row", *fields]
         rows = []
-        for rec in df.reindex(columns=cols).itertuples(index=False):
+        extras = df["_extra"].tolist() if "_extra" in df else [None] * len(df)
+        for rec, extra in zip(df.reindex(columns=cols).itertuples(index=False), extras):
             row = {c: _plain(v) for c, v in zip(cols, rec)}
             row["source_row"] = int(row["source_row"]) if row["source_row"] is not None else 0
             row["batch_id"] = batch_id
+            row["extra"] = extra if isinstance(extra, dict) and extra else None
             rows.append(row)
         conn.execute(table.insert(), rows)
     conn.execute(delete(db.opening_balances))
@@ -61,8 +63,10 @@ def replace_all(conn: Connection, data: MasterData, batch_id: int) -> None:
 def _frame(conn: Connection, kind: str) -> pd.DataFrame:
     table, fields = db.TXN[kind]
     cols = ["source_row", *fields]
-    result = conn.execute(select(*[table.c[c] for c in cols]).order_by(table.c.source_row, table.c.id))
-    df = pd.DataFrame(result.fetchall(), columns=cols)
+    result = conn.execute(select(*[table.c[c] for c in cols], table.c.extra)
+                          .order_by(table.c.source_row, table.c.id))
+    df = pd.DataFrame(result.fetchall(), columns=[*cols, "_extra"])
+    df["_extra"] = df["_extra"].map(lambda v: v if isinstance(v, dict) else {})
     for c in fields:
         if c in TEXT_FIELDS:
             df[c] = df[c].astype(object).where(df[c].notna(), np.nan)

@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, update
 
 from mis_reports import reports as R
 from mis_reports.excel_export import build_workbook
+from mis_reports.master_sheet import build_master_sheet
 from mis_reports.pipeline import load_aliases as csv_aliases
 
 from . import auth, db, imports, store
@@ -22,6 +23,7 @@ from .config import BASE, Settings
 from .reports_api import ReportCache, report_json, to_json
 
 WEB_DIST = BASE / "web" / "dist"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 class LoginIn(BaseModel):
@@ -54,10 +56,28 @@ class AliasIn(BaseModel):
     report_as: str
 
 
+def _first_admin_from_settings(engine, settings: Settings) -> None:
+    """With ADMIN_PASSWORD set, a brand-new installation starts with that admin instead of the set-up page,
+    so nobody else can claim a freshly published site first. Does nothing once any user exists."""
+    if not settings.admin_password:
+        return
+    if len(settings.admin_password) < auth.MIN_PASSWORD:
+        raise SystemExit(f"ADMIN_PASSWORD must be at least {auth.MIN_PASSWORD} characters")
+    name = settings.admin_username.strip().lower() or "admin"
+    with engine.begin() as conn:
+        if conn.execute(select(func.count()).select_from(db.users)).scalar_one():
+            return
+        uid = conn.execute(db.users.insert().values(
+            username=name, full_name="", password_hash=auth.hash_password(settings.admin_password), role="admin",
+            active=True, created_at=db.utcnow())).inserted_primary_key[0]
+        store.audit(conn, {"id": uid, "username": name}, "setup.first_admin")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     engine = db.make_engine(settings.database_url)
     db.init_db(engine, alias_seed=csv_aliases())
+    _first_admin_from_settings(engine, settings)
     cache = ReportCache(engine)
 
     app = FastAPI(title="Business Reports", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -228,10 +248,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def import_file(batch_id: int, _=Depends(admin)):
         with engine.connect() as conn:
             b = imports._get(conn, batch_id)
-        path = settings.upload_dir / b.stored_as
-        if not path.exists():
+            content = imports.file_content(conn, settings, b)
+        if content is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "The file is no longer kept")
-        return FileResponse(path, filename=b.filename)
+        return Response(content, media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{b.filename}"'})
 
     # ------------------------------------------------------------------ reports (everyone signed in)
     def filters(as_of: date | None = None, date_from: date | None = None, date_to: date | None = None,
@@ -263,6 +283,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store.audit(conn, user, "reports.download")
         return Response(build_workbook(rs), headers={"Content-Disposition": f'attachment; filename="{name}"'},
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    @app.get("/api/master-sheet")
+    def master_sheet(user=Depends(viewer)):
+        """The Master Sheet workbook (Purchase, Sales, PO, SO, Total Debtor Creditor, masters, Display),
+        rebuilt from the saved data with the sheet's own formulas."""
+        _, data, _ = cache.data()
+        name = f"Master Sheet {db.utcnow():%Y-%m-%d}.xlsx"
+        with engine.begin() as conn:
+            store.audit(conn, user, "master_sheet.download")
+        return Response(build_master_sheet(data), media_type=XLSX,
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     # ------------------------------------------------------------------ product names
     @app.get("/api/aliases")
