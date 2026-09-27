@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { rate as fmtRate } from "../format";
 
 export type Side = "Purchase" | "Sales";
@@ -53,18 +53,134 @@ export function Field({ label, required, hint, children, wide }: {
   );
 }
 
-/** Pick a name from the list, or type a new one (the list suggests as you type). */
-export function Combo({ value, onChange, options, placeholder }: {
-  value: string; onChange: (v: string) => void; options: string[]; placeholder?: string;
+/** What each list holds, for "+ Add a new …". */
+export const NOUN: Record<string, string> = {
+  "party:Purchase": "party", "party:Sales": "party", product: "product", broker: "broker", company: "company",
+  warehouse: "warehouse", type: "type", sub_type: "sub type", branch: "branch", place: "delivery place",
+  packing: "packing", reason: "reason", expense: "expense",
+};
+
+/** Names added while entering (before they are saved), so every dropdown on the page offers them. */
+export const AddedNames = createContext<{ added: Record<string, string[]>; add: (list: string, name: string) => void }>({
+  added: {}, add: () => undefined,
+});
+
+export function useAddedNames() {
+  const [added, setAdded] = useState<Record<string, string[]>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("added-names") || "{}"); } catch { return {}; }
+  });
+  const add = useCallback((list: string, name: string) => {
+    setAdded((a) => {
+      if ((a[list] ?? []).some((x) => key(x) === key(name))) return a;
+      const next = { ...a, [list]: [...(a[list] ?? []), name.trim().replace(/\s+/g, " ")] };
+      try { sessionStorage.setItem("added-names", JSON.stringify(next)); } catch { /* private window */ }
+      return next;
+    });
+  }, []);
+  return { added, add };
+}
+
+/** The lists with the names added on this page (saved names already come back from the data). */
+export function withAdded(lists: Record<string, string[]>, added: Record<string, string[]>) {
+  const out = { ...lists };
+  for (const [list, names] of Object.entries(added)) {
+    const have = new Set((lists[list] ?? []).map(key));
+    const extra = names.filter((n) => !have.has(key(n)));
+    if (extra.length) out[list] = [...(lists[list] ?? []), ...extra].sort((a, b) => a.localeCompare(b));
+  }
+  return out;
+}
+
+/** A dropdown that suggests as you type. With a list name it also offers "+ Add new" (not in strict mode, where only
+ * the choices shown can be picked, e.g. a bill). Works the same in a form and in a table cell. */
+export function Combo({ value, onChange, options, placeholder, list, strict, cell, invalid }: {
+  value: string; onChange: (v: string) => void; options: string[]; placeholder?: string; list?: string;
+  strict?: boolean; cell?: boolean; invalid?: boolean;
 }) {
-  const id = useId();
-  const isNew = value.trim() !== "" && !options.some((o) => key(o) === key(value));
+  const { added, add } = useContext(AddedNames);
+  const input = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState<string | null>(null);   // what is typed; null = showing the whole list
+  const [hi, setHi] = useState(0);
+  const [adding, setAdding] = useState(false);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; up: boolean } | null>(null);
+  const noun = (list && NOUN[list]) || "name";
+  const known = options.some((o) => key(o) === key(value));
+  const isAdded = !!list && (added[list] ?? []).some((x) => key(x) === key(value));
+  const isNew = !strict && value.trim() !== "" && (!known || isAdded);
+  const q = key(typed ?? "");
+  const shown = (q ? options.filter((o) => key(o).includes(q)) : options).slice(0, 80);
+  const canAdd = !strict && !!list;
+  const exact = q !== "" && options.some((o) => key(o) === q);
+  type Item = { label: string; value: string; add?: boolean; start?: boolean };
+  const items: Item[] = adding && !q ? [] : [
+    ...(canAdd && !q ? [{ label: `+ Add a new ${noun}…`, value: "", start: true }] : []),
+    ...shown.map((o) => ({ label: o, value: o })),
+    ...(canAdd && q && !exact ? [{ label: `+ Add “${(typed ?? "").trim()}” as a new ${noun}`, value: (typed ?? "").trim(), add: true }] : []),
+  ];
+
+  const place = () => {
+    const r = input.current?.getBoundingClientRect();
+    if (!r) return;
+    const up = r.bottom + 260 > window.innerHeight && r.top > 260;
+    setBox({ left: r.left, top: up ? r.top : r.bottom, width: Math.max(r.width, 220), up });
+  };
+  const show = () => { place(); setOpen(true); };
+  const close = () => { setOpen(false); setTyped(null); setAdding(false); setHi(0); };
+  useEffect(() => {
+    if (!open) return;
+    const off = () => close();
+    window.addEventListener("scroll", off, true);
+    window.addEventListener("resize", off);
+    return () => { window.removeEventListener("scroll", off, true); window.removeEventListener("resize", off); };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choose = (it: Item) => {
+    if (it.start) { setAdding(true); setTyped(""); onChange(""); input.current?.focus(); return; }
+    if (it.add && list) add(list, it.value);
+    onChange(it.value);
+    close();
+  };
+  const leave = () => {
+    // typed but not picked: keep it (a new name) or, in strict mode, the one choice it matches
+    if (typed !== null && typed.trim() !== "") {
+      const t = typed.trim();
+      const match = options.find((o) => key(o) === key(t)) ?? (strict ? shown.length === 1 ? shown[0] : "" : undefined);
+      if (match !== undefined) onChange(match);
+      else { if (canAdd && list) add(list, t); onChange(t); }
+    }
+    close();
+  };
+
   return (
-    <span className="combo">
-      <input list={id} value={value} placeholder={placeholder ?? "Choose, or type a new one"}
-        onChange={(e) => onChange(e.target.value)} />
-      <datalist id={id}>{options.map((o) => <option key={o} value={o} />)}</datalist>
+    <span className={`combo ${cell ? "in-cell" : ""}`}>
+      <input ref={input} value={typed ?? value} className={invalid || (strict && value && !known) ? "invalid" : ""}
+        placeholder={adding ? `Type the new ${noun}` : placeholder ?? (strict ? "Choose…" : "Choose, or type a new one")}
+        onFocus={show} onClick={show} onBlur={leave}
+        onChange={(e) => { setTyped(e.target.value); setHi(0); if (!open) show(); if (!strict) onChange(e.target.value); }}
+        onKeyDown={(e) => {
+          if (!open) { if (e.key === "ArrowDown") { show(); e.preventDefault(); } return; }
+          if (e.key === "ArrowDown") { setHi((h) => Math.min(h + 1, items.length - 1)); e.preventDefault(); }
+          else if (e.key === "ArrowUp") { setHi((h) => Math.max(h - 1, 0)); e.preventDefault(); }
+          else if (e.key === "Enter") {
+            const it = items[hi];
+            if (it && (typed !== null || it.start)) { choose(it); e.preventDefault(); e.stopPropagation(); }
+            else leave();
+          } else if (e.key === "Escape") { close(); e.stopPropagation(); }
+        }} />
+      <span className="combo-arrow" aria-hidden onMouseDown={(e) => { e.preventDefault(); input.current?.focus(); show(); }}>▾</span>
       {isNew && <span className="new-tag" title="Not in the data yet: it is added with this entry">new</span>}
+      {open && box && (
+        <ul className={`combo-list ${box.up ? "up" : ""}`} style={{ left: box.left, width: box.width,
+          ...(box.up ? { bottom: window.innerHeight - box.top } : { top: box.top }) }}>
+          {items.length === 0 && <li className="empty">{adding ? `Type the new ${noun}, then press Enter` :
+            strict ? "No match" : "No match: keep typing to add it as new"}</li>}
+          {items.map((it, i) => (
+            <li key={`${i}-${it.label}`} className={`${i === hi ? "hi" : ""} ${it.add || it.start ? "add" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); choose(it); }} onMouseEnter={() => setHi(i)}>{it.label}</li>
+          ))}
+        </ul>
+      )}
     </span>
   );
 }

@@ -163,3 +163,25 @@ def test_daily_backups_keep_the_last_30(tmp_path):
     kept = sorted(p.name for p in folder.iterdir())
     assert len(kept) == 30 and kept[-1] == made.name
     assert office_urls(8000)[-1].endswith(":8000")
+
+
+def test_a_table_of_rows_is_saved_together_and_undone_together(client, rich_master):
+    imported(client, rich_master)
+    before = client.get("/api/reports", params=P).json()
+    order = {"kind": "PO", "fields": {"party": "Grid Mill", "commodity": "Urad", "qty_mt": 2, "rate": 80,
+                                      "date": "2026-09-02"}}
+    bad = {"kind": "PO", "fields": {**order["fields"], "qty_mt": 0}}
+    r = client.post("/api/entry/batch", json={"version": ctx(client)["version"], "what": "purchase orders", "items": [
+        {"action": "order", "label": "Row 1", "body": order}, {"action": "order", "label": "Row 2", "body": bad}]})
+    assert r.status_code == 422 and r.json()["detail"] == "Row 2: Enter the quantity and the rate"
+    assert len(client.get("/api/reports", params=P).json()["po"]) == len(before["po"])   # nothing was saved
+
+    r = entry(client, "batch", {"what": "purchase orders", "items": [
+        {"action": "order", "label": f"Row {i}", "body": order} for i in (1, 2, 3)]})
+    assert r["message"] == "3 purchase orders saved for Grid Mill"
+    po = client.get("/api/reports", params=P).json()["po"]
+    assert len(po) == len(before["po"]) + 3 and len({o["contract_no"] for o in po}) == len(po)
+    assert client.get("/api/audit").json()[0]["action"] == "entry.order"
+    assert client.post("/api/entry-undo").json()["message"] == "Undone: 3 purchase orders saved for Grid Mill"
+    assert len(client.get("/api/reports", params=P).json()["po"]) == len(before["po"])
+    assert client.post("/api/entry/batch", json={"items": []}).status_code == 422

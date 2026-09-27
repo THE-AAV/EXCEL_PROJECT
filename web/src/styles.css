@@ -158,7 +158,7 @@ details summary { cursor: pointer; margin: 10px 0; color: var(--brand); }
 .req { color: var(--bad); }
 .combo { position: relative; display: block; }
 .combo input { width: 100%; }
-.new-tag { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; color: var(--good); background: #e7f6ec; padding: 1px 6px; border-radius: 8px; pointer-events: none; }
+.new-tag { position: absolute; right: 24px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 700; color: var(--good); background: #e7f6ec; padding: 1px 6px; border-radius: 8px; pointer-events: none; }
 .numbering { display: flex; gap: 6px; }
 .numbering select { flex: 0 0 auto; }
 .numbering input { flex: 1; min-width: 0; }
@@ -185,6 +185,39 @@ code { background: #f0f3f7; padding: 1px 6px; border-radius: 4px; font-size: 13p
 .login-card button { margin-top: 12px; padding: 10px; }
 
 /* ---------------------------------------------------------------- phone */
+/* dropdown with suggestions and "+ Add new" */
+.combo input { padding-right: 22px; }
+.combo-arrow { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 11px; cursor: pointer; }
+.combo-list { position: fixed; z-index: 50; margin: 2px 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(20, 30, 45, .16); max-height: 250px; overflow-y: auto; font-size: 13px; }
+.combo-list li { padding: 6px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo-list li.hi { background: var(--brand-soft); }
+.combo-list li.add { color: var(--brand); font-weight: 600; }
+.combo-list li.empty { color: var(--muted); cursor: default; white-space: normal; }
+.card-head .seg { margin-left: auto; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { background: #fff; color: var(--ink); border: 0; border-radius: 0; padding: 6px 12px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.active { background: var(--brand); color: #fff; }
+
+/* "Table (like Excel)" entry */
+.sheet-wrap { overflow-x: auto; margin: 6px 0 8px; border: 1px solid #c9d2dc; border-radius: 6px; background: #fff; }
+table.sheet { border-collapse: collapse; font-size: 13px; }
+table.sheet th { background: #eef2f6; font-weight: 600; font-size: 12px; color: #394656; text-align: left; padding: 6px 8px; border: 1px solid #d4dbe3; white-space: nowrap; position: sticky; top: 0; }
+table.sheet th .info { color: var(--muted); font-weight: 400; margin-left: 4px; cursor: help; }
+table.sheet td { border: 1px solid #dfe5eb; padding: 0; height: 32px; }
+table.sheet td input:not([type=checkbox]) { width: 100%; border: 0; border-radius: 0; padding: 6px 8px; background: transparent; font-size: 13px; min-width: 0; height: 31px; }
+table.sheet td input[type=checkbox] { margin: 0 auto; display: block; }
+table.sheet td input:focus { outline: 2px solid var(--brand); outline-offset: -2px; background: #fff; }
+table.sheet td.num input { text-align: right; }
+table.sheet td.ro { background: #f6f8fa; color: #394656; padding: 0 8px; white-space: nowrap; }
+table.sheet td.rowno, table.sheet th.rowno { background: #eef2f6; color: var(--muted); text-align: center; width: 38px; min-width: 38px; font-size: 12px; position: relative; }
+table.sheet .row-del { display: none; position: absolute; inset: 0; border: 0; border-radius: 0; background: #fdecea; color: var(--bad); padding: 0; font-size: 12px; }
+table.sheet tr:hover .row-del { display: block; }
+table.sheet tr.bad td.rowno { background: #fdecea; color: var(--bad); font-weight: 700; }
+table.sheet input.invalid { background: #fdecea; }
+.combo.in-cell .combo-arrow { right: 5px; }
+.combo.in-cell .new-tag { right: 20px; }
+
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: fixed; inset: 0 auto 0 0; width: 240px; z-index: 30; transform: translateX(-100%); transition: transform .2s; }

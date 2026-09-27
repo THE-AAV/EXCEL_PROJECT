@@ -98,7 +98,7 @@ export function NoteForm({ ctx, save, busy, kind }: FormProps & { kind: Side }) 
             <tbody>
               {lines.map((r) => (
                 <tr key={r.id}>
-                  <td><Combo value={r.reason} onChange={(v) => upd(setReasons, r.id, { reason: v })} options={ctx.lists.reason} /></td>
+                  <td><Combo value={r.reason} onChange={(v) => upd(setReasons, r.id, { reason: v })} list="reason" options={ctx.lists.reason} /></td>
                   <td><Num value={r.qty} onChange={(v) => upd(setReasons, r.id, { qty: v })} /></td>
                   <td><Num value={r.rate} onChange={(v) => upd(setReasons, r.id, { rate: v })} /></td>
                   <td><Num value={r.amount} placeholder={r.value ? fmtRate(r.value) : ""} onChange={(v) => upd(setReasons, r.id, { amount: v })} /></td>
@@ -118,7 +118,7 @@ export function NoteForm({ ctx, save, busy, kind }: FormProps & { kind: Side }) 
               <tbody>
                 {expenses.map((e) => (
                   <tr key={e.id}>
-                    <td><Combo value={e.type} onChange={(v) => upd(setExpenses, e.id, { type: v })} options={ctx.lists.expense} /></td>
+                    <td><Combo value={e.type} onChange={(v) => upd(setExpenses, e.id, { type: v })} list="expense" options={ctx.lists.expense} /></td>
                     <td><Num value={e.amount} onChange={(v) => upd(setExpenses, e.id, { amount: v })} /></td>
                     <td><button className="link" onClick={() => setExpenses((xs) => xs.filter((x) => x.id !== e.id))}>Remove</button></td>
                   </tr>

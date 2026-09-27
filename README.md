@@ -99,9 +99,14 @@ On a Mac or Linux computer use `./start_web_app.sh` instead of the `.bat` file.
   Purchase Order → Purchase Invoice → Debit Note → Expenses → Payment, and Sales Order → Sales Invoice →
   Credit Note → Receipt. Contract and note numbers are automatic (or your own), a known party fills in its broker,
   company, type, warehouse, GSTIN and branch, picking a contract fills in the product, balance quantity and rate,
-  and every form shows the amounts before you save. Names not in the lists yet are typed in and marked **new**.
+  and every form shows the amounts before you save. Every name box is a dropdown that suggests names from your
+  data as you type, and has **+ Add new** for a party, product, broker, warehouse, branch and so on that isn't
+  there yet (it is marked **new** and offered in every dropdown on the page).
   Payments and receipts are adjusted against the oldest bills with one click. **Undo last entry** takes the last
   entry back out.
+  Switch to **Table (like Excel)** at the top of any step to type many rows at once: Tab moves right, Enter moves
+  down, and a block copied from Excel can be pasted in. The table shows what will be saved and any problem per
+  row; all rows are saved together (or none), and **Undo last entry** takes the whole table back out.
 - **Sheets**: every entry, sheet by sheet (Purchase, Sales, PO, SO, notes), with the Master Sheet's column names,
   search, filters, sorting and totals.
 - **Audit log** (admin): who did what and when, with the details of each entry.

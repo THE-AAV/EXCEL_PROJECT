@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { ExpenseForm, NoteForm, SettlementForm } from "../entry/BillForms";
-import type { EntryContext } from "../entry/common";
+import { AddedNames, useAddedNames, withAdded, type EntryContext } from "../entry/common";
 import InvoiceForm from "../entry/InvoiceForm";
 import OrderForm from "../entry/OrderForm";
+import { ExpenseTable, InvoiceTable, NoteTable, OrderTable, SettlementTable } from "../entry/TableEntry";
 import { rate as fmtRate, when } from "../format";
 import { useData } from "../session";
 
@@ -24,6 +25,10 @@ export default function Enter() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ good: boolean; text: string } | null>(null);
   const [confirmUndo, setConfirmUndo] = useState(false);
+  const [style, setStyle] = useState<"form" | "table">(() => {
+    try { return localStorage.getItem("entry-style") === "table" ? "table" : "form"; } catch { return "form"; }
+  });
+  const names = useAddedNames();
 
   const load = useCallback(async () => {
     const [c, r] = await Promise.all([api<EntryContext>("/entry/context"), api<Recent[]>("/entry-recent")]);
@@ -70,7 +75,12 @@ export default function Enter() {
   };
 
   const pick = (s: Step) => { setStep(s); sessionStorage.setItem("entry-step", s); setMsg(null); };
-  const props = ctx ? { ctx, save, busy } : null;
+  const shown = useMemo(() => (ctx ? { ...ctx, lists: withAdded(ctx.lists, names.added) } : null), [ctx, names.added]);
+  const props = shown ? { ctx: shown, save, busy } : null;
+  const pickStyle = (s: "form" | "table") => {
+    setStyle(s);
+    try { localStorage.setItem("entry-style", s); } catch { /* private window */ }
+  };
   const canUndo = recent[0]?.status === "active";
 
   return (
@@ -89,19 +99,39 @@ export default function Enter() {
       </div>
       {msg && <div className={msg.good ? "notice good" : "error"}>{msg.text}</div>}
       <div className="card">
-        <h2 className="card-title">{step}</h2>
-        {!props ? <span className="spinner" /> : (
-          <div key={step}>
-            {step === "Purchase Order" && <OrderForm {...props} kind="PO" />}
-            {step === "Purchase Invoice" && <InvoiceForm {...props} kind="Purchase" />}
-            {step === "Debit Note" && <NoteForm {...props} kind="Purchase" />}
-            {step === "Expenses" && <ExpenseForm {...props} />}
-            {step === "Payment" && <SettlementForm {...props} kind="Purchase" />}
-            {step === "Sales Order" && <OrderForm {...props} kind="SO" />}
-            {step === "Sales Invoice" && <InvoiceForm {...props} kind="Sales" />}
-            {step === "Credit Note" && <NoteForm {...props} kind="Sales" />}
-            {step === "Receipt" && <SettlementForm {...props} kind="Sales" />}
+        <div className="card-head">
+          <h2 className="card-title">{step}</h2>
+          <div className="seg" role="group" aria-label="Entry style">
+            <button className={style === "form" ? "active" : ""} onClick={() => pickStyle("form")}>Form</button>
+            <button className={style === "table" ? "active" : ""} onClick={() => pickStyle("table")}>Table (like Excel)</button>
           </div>
+        </div>
+        {!props ? <span className="spinner" /> : (
+          <AddedNames.Provider value={names}>
+            <div key={`${step}-${style}`}>
+              {style === "form" ? <>
+                {step === "Purchase Order" && <OrderForm {...props} kind="PO" />}
+                {step === "Purchase Invoice" && <InvoiceForm {...props} kind="Purchase" />}
+                {step === "Debit Note" && <NoteForm {...props} kind="Purchase" />}
+                {step === "Expenses" && <ExpenseForm {...props} />}
+                {step === "Payment" && <SettlementForm {...props} kind="Purchase" />}
+                {step === "Sales Order" && <OrderForm {...props} kind="SO" />}
+                {step === "Sales Invoice" && <InvoiceForm {...props} kind="Sales" />}
+                {step === "Credit Note" && <NoteForm {...props} kind="Sales" />}
+                {step === "Receipt" && <SettlementForm {...props} kind="Sales" />}
+              </> : <>
+                {step === "Purchase Order" && <OrderTable {...props} kind="PO" />}
+                {step === "Purchase Invoice" && <InvoiceTable {...props} kind="Purchase" />}
+                {step === "Debit Note" && <NoteTable {...props} kind="Purchase" />}
+                {step === "Expenses" && <ExpenseTable {...props} />}
+                {step === "Payment" && <SettlementTable {...props} kind="Purchase" />}
+                {step === "Sales Order" && <OrderTable {...props} kind="SO" />}
+                {step === "Sales Invoice" && <InvoiceTable {...props} kind="Sales" />}
+                {step === "Credit Note" && <NoteTable {...props} kind="Sales" />}
+                {step === "Receipt" && <SettlementTable {...props} kind="Sales" />}
+              </>}
+            </div>
+          </AddedNames.Provider>
         )}
         {busy && <div className="muted"><span className="spinner" /> Saving…</div>}
       </div>

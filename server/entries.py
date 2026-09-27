@@ -261,15 +261,31 @@ def save_entry(engine, workbooks: Workbooks, user, action: str, body: dict) -> d
             path.write_bytes(content)
             mf = MasterFile(path, backup_dir=Path(tmp) / "backups", log_path=Path(tmp) / "log.csv")
             try:
-                message = _run(mf, action, body)
+                if action == "batch":   # the rows of a table: all saved together (or none), one undo
+                    items = body.get("items") or []
+                    if not items:
+                        raise EntryError("The table is empty")
+                    with mf.batch():
+                        for it in items:
+                            try:
+                                _run(mf, it["action"], it["body"])
+                            except EntryError as e:
+                                raise EntryError(f"{it.get('label') or 'A row'}: {e}") from None
+                    action = items[0]["action"]
+                    message = f"{len(items)} {body.get('what') or 'entries'} saved"
+                else:
+                    message = _run(mf, action, body)
             except EntryError as e:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
             except (KeyError, TypeError, ValueError) as e:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Something is missing or not valid ({e})")
             new = path.read_bytes()
-            log = list(reversed(mf.read_log()))
-        if action in ("note", "expenses", "settlement") and log and log[-1].get("Party"):
-            message += f" for {log[-1]['Party']}"
+            log = list(reversed(mf.read_log(limit=100_000)))
+        parties = list(dict.fromkeys(x["Party"] for x in log if x.get("Party")))
+        if body.get("items") and parties:
+            message += " for " + (", ".join(parties) if len(parties) <= 3 else f"{len(parties)} parties")
+        elif action in ("note", "expenses", "settlement") and parties:
+            message += f" for {parties[-1]}"
         data = load_master(io.BytesIO(new))
         with engine.begin() as conn:
             batch_id = conn.execute(db.import_batches.insert().values(

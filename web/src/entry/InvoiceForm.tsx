@@ -113,7 +113,7 @@ export default function InvoiceForm({ ctx, save, busy, kind }: FormProps & { kin
         {!purchase && " An item can also be linked to the purchase bill the goods came from."}</p>
       <div className="form-grid">
         <Field label={purchase ? "Supplier" : "Customer"} required>
-          <Combo value={h.party} onChange={setHead("party")} options={L[`party:${kind}`]} />
+          <Combo value={h.party} onChange={setHead("party")} list={`party:${kind}`} options={L[`party:${kind}`]} />
         </Field>
         <Field label={purchase ? "Supplier's bill No." : "Our invoice No."}
           hint={purchase ? undefined : "Next number in the series; change it if needed"}>
@@ -148,7 +148,7 @@ export default function InvoiceForm({ ctx, save, busy, kind }: FormProps & { kin
                     {orders.map((o) => <option key={String(o.source_row)} value={String(o.source_row)}>{orderLabel(o)}</option>)}
                   </select>
                 </Field>
-                <Field label="Product" required><Combo value={it.commodity} onChange={(v) => setItem(it.id, { commodity: v })} options={L.product} /></Field>
+                <Field label="Product" required><Combo value={it.commodity} onChange={(v) => setItem(it.id, { commodity: v })} list="product" options={L.product} /></Field>
                 <Field label="Weight (kg)" required><Num value={it.qty} onChange={(v) => setItem(it.id, { qty: v })} step={10} /></Field>
                 <Field label="Rate (₹ per kg)" required><Num value={it.rate} onChange={(v) => setItem(it.id, { rate: v })} /></Field>
                 {!purchase && (
@@ -185,13 +185,13 @@ export default function InvoiceForm({ ctx, save, busy, kind }: FormProps & { kin
 
       {tab === "more" && (
         <div className="form-grid">
-          <Field label="Company"><Combo value={h.company} onChange={setHead("company")} options={L.company} /></Field>
-          <Field label="Type"><Combo value={h.type} onChange={(v) => { setHead("type")(v); if (key(v) === "import") setGst("0"); }} options={L.type} /></Field>
-          <Field label="Sub type"><Combo value={h.sub_type} onChange={setHead("sub_type")} options={L.sub_type} /></Field>
-          <Field label="Broker"><Combo value={h.broker} onChange={setHead("broker")} options={L.broker} /></Field>
-          <Field label="Warehouse"><Combo value={h.warehouse} onChange={setHead("warehouse")} options={L.warehouse} /></Field>
+          <Field label="Company"><Combo value={h.company} onChange={setHead("company")} list="company" options={L.company} /></Field>
+          <Field label="Type"><Combo value={h.type} onChange={(v) => { setHead("type")(v); if (key(v) === "import") setGst("0"); }} list="type" options={L.type} /></Field>
+          <Field label="Sub type"><Combo value={h.sub_type} onChange={setHead("sub_type")} list="sub_type" options={L.sub_type} /></Field>
+          <Field label="Broker"><Combo value={h.broker} onChange={setHead("broker")} list="broker" options={L.broker} /></Field>
+          <Field label="Warehouse"><Combo value={h.warehouse} onChange={setHead("warehouse")} list="warehouse" options={L.warehouse} /></Field>
           <Field label="Party GSTIN"><input value={h.gstin} onChange={(e) => setHead("gstin")(e.target.value)} /></Field>
-          <Field label="Branch"><Combo value={h.branch} onChange={setHead("branch")} options={L.branch} /></Field>
+          <Field label="Branch"><Combo value={h.branch} onChange={setHead("branch")} list="branch" options={L.branch} /></Field>
         </div>
       )}
 

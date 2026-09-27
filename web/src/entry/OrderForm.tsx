@@ -30,19 +30,19 @@ export default function OrderForm({ ctx, save, busy, kind }: FormProps & { kind:
         <Numbering label="Contract No." next={ctx.next[kind]} used={ctx.all_contracts[kind]} own={own} setOwn={setOwn}
           auto={auto} setAuto={setAuto} />
         <Field label={kind === "PO" ? "Supplier" : "Customer"} required>
-          <Combo value={f.party} onChange={set("party")} options={L[`party:${side}`]} />
+          <Combo value={f.party} onChange={set("party")} list={`party:${side}`} options={L[`party:${side}`]} />
         </Field>
-        <Field label="Product" required><Combo value={f.commodity} onChange={set("commodity")} options={L.product} /></Field>
-        <Field label="Broker"><Combo value={f.broker} onChange={set("broker")} options={L.broker} /></Field>
+        <Field label="Product" required><Combo value={f.commodity} onChange={set("commodity")} list="product" options={L.product} /></Field>
+        <Field label="Broker"><Combo value={f.broker} onChange={set("broker")} list="broker" options={L.broker} /></Field>
         <Field label="Order date" required><input type="date" value={f.date} onChange={(e) => set("date")(e.target.value)} /></Field>
         <Field label="Quantity (MT)" required><Num value={f.qty_mt} onChange={set("qty_mt")} /></Field>
         <Field label="Rate (₹ per kg)" required><Num value={f.rate} onChange={set("rate")} /></Field>
         <Field label="Delivery date"><input type="date" value={f.delivery_date} onChange={(e) => set("delivery_date")(e.target.value)} /></Field>
-        <Field label="Delivery place"><Combo value={f.delivery_place} onChange={set("delivery_place")} options={L.place} /></Field>
-        <Field label="Packing"><Combo value={f.packing} onChange={set("packing")} options={L.packing} /></Field>
-        <Field label="Company"><Combo value={f.company} onChange={set("company")} options={L.company} /></Field>
-        <Field label="Warehouse"><Combo value={f.warehouse} onChange={set("warehouse")} options={L.warehouse} /></Field>
-        <Field label="Branch"><Combo value={f.branch} onChange={set("branch")} options={L.branch} /></Field>
+        <Field label="Delivery place"><Combo value={f.delivery_place} onChange={set("delivery_place")} list="place" options={L.place} /></Field>
+        <Field label="Packing"><Combo value={f.packing} onChange={set("packing")} list="packing" options={L.packing} /></Field>
+        <Field label="Company"><Combo value={f.company} onChange={set("company")} list="company" options={L.company} /></Field>
+        <Field label="Warehouse"><Combo value={f.warehouse} onChange={set("warehouse")} list="warehouse" options={L.warehouse} /></Field>
+        <Field label="Branch"><Combo value={f.branch} onChange={set("branch")} list="branch" options={L.branch} /></Field>
       </div>
       <Preview>Order value: <b>{money2(value)}</b> ({num(f.qty_mt) || 0} MT × 1000 × ₹{num(f.rate) || 0}/kg)</Preview>
       <div className="actions">
