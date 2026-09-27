@@ -15,6 +15,7 @@ interface Batch {
     new_products: string[];
     totals: { purchase_before_gst: number; sales_before_gst: number };
     checks: { count: number; rows: Record<string, string>[] };
+    sheets?: Record<string, string>;
   };
   warnings: string[];
   created_by: string | null;
@@ -98,9 +99,12 @@ export default function Import() {
 
   return (
     <>
-      <p className="hint">Upload the Master Sheet workbook (.xlsx). You see what was found before anything is saved.
-        Confirming makes it the data behind every report and replaces the previous import, which stays listed below
-        and can be brought back.</p>
+      <p className="hint">Upload the Master Sheet workbook (.xlsx), or a workbook with just the data sheets (Purchase,
+        Sales, PO, SO and, if you use them, Debit Notes / Credit Notes; other sheet names such as “Purchase Register”
+        are recognised too). You see what was found before anything is saved. Confirming makes it the data behind
+        every report and replaces the previous import, which stays listed below and can be brought back. The
+        complete Master Sheet, with the Total Debtor Creditor, masters and Display sheets and all formulas, is then
+        made for you: use <b>Download Master Sheet</b> at the top of the reports.</p>
 
       <div className="card upload">
         <input key={inputKey} type="file" accept=".xlsx,.xlsm" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
@@ -129,6 +133,10 @@ export default function Import() {
               ))}
             </tbody>
           </table>
+          {pending.summary.sheets && (
+            <p className="muted">Sheets used: {Object.entries(pending.summary.sheets)
+              .map(([kind, sheet]) => (kind === sheet ? kind : `${kind} (from “${sheet}”)`)).join(", ")}</p>
+          )}
           <p>Purchases before GST: <b>₹{inr(pending.summary.totals.purchase_before_gst)}</b> · Sales before GST: <b>₹{inr(pending.summary.totals.sales_before_gst)}</b></p>
           {pending.summary.current_counts && (
             <>

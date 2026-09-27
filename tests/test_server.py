@@ -61,7 +61,7 @@ def rich_master(tmp_path):
 def assert_same(a, b, where=""):
     """Deep equality, with numbers equal to 9 significant digits (JSON turns whole floats into ints)."""
     if isinstance(a, dict) and isinstance(b, dict):
-        assert a.keys() == b.keys(), where
+        assert a.keys() == b.keys(), (where, set(a) ^ set(b))
         for k in a:
             assert_same(a[k], b[k], f"{where}.{k}")
     elif isinstance(a, list) and isinstance(b, list):
@@ -282,3 +282,88 @@ def test_health(client, settings):
     eng = db.make_engine(settings.database_url)
     with eng.connect() as conn:
         assert conn.execute(text("select count(*) from users")).scalar_one() == 0
+
+
+def test_master_sheet_is_rebuilt_from_the_database(client, rich_master):
+    """The downloaded Master Sheet has every sheet and formula, and reading it back gives the same reports."""
+    setup_admin(client)
+    client.post(f"/api/imports/{upload(client, rich_master).json()['id']}/confirm")
+    add_user(client, "reader", "viewer")
+    sign_in(client, "reader")
+    r = client.get("/api/master-sheet")
+    assert r.status_code == 200 and r.headers["content-disposition"].startswith('attachment; filename="Master Sheet')
+
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    assert wb.sheetnames == ["Main Display", "Display", "Purchase", "PO", "SO", "Sales", "Total Debtor Creditor",
+                             "masters", "Debit Notes", "Credit Notes"]
+    assert wb["Purchase"]["AB4"].value == "=W4*Y4" and wb["Purchase"]["B4"].value == "=VLOOKUP(H4,masters!B:C,2,0)"
+    assert wb["Sales"]["X4"].value in ("=R4*U4", "=S4*U4")
+    assert wb["Total Debtor Creditor"]["D4"].value == "=SUMIF(Purchase!B:B,'Total Debtor Creditor'!A4,Purchase!AP:AP)"
+    assert wb["Display"]["E24"].value == "=J22-E22"
+
+    rebuilt = load_master(io.BytesIO(r.content))
+    for f in (Filters(as_of=AS_OF), Filters(as_of=date(2026, 8, 31))):
+        assert_same(report_json(build_reports(rebuilt, Filters(**{**f.__dict__, "aliases": {}}))),
+                    report_json(build_reports(load_master(rich_master), Filters(**{**f.__dict__, "aliases": {}}))),
+                    str(f))
+
+
+def _header_row(ws, name="PARTY NAME"):
+    return next(c.row for row in ws.iter_rows(max_row=10) for c in row if c.value == name)
+
+
+def test_columns_the_reports_dont_use_are_kept(client, rich_master, tmp_path):
+    wb = openpyxl.load_workbook(rich_master)
+    ws = wb["Purchase"]
+    hdr, col = _header_row(ws), ws.max_column + 1
+    ws.cell(hdr, col, "Lot Code")
+    ws.cell(hdr + 1, col, "LOT-7")
+    path = tmp_path / "extra.xlsx"
+    wb.save(path)
+
+    setup_admin(client)
+    client.post(f"/api/imports/{upload(client, path).json()['id']}/confirm")
+    out = openpyxl.load_workbook(io.BytesIO(client.get("/api/master-sheet").content))["Purchase"]
+    headers = [c.value for c in out[3]]
+    assert "Lot Code" in headers
+    assert out.cell(4, headers.index("Lot Code") + 1).value == "LOT-7"
+
+
+def test_a_workbook_with_only_data_sheets_and_other_names_imports(client, rich_master, tmp_path):
+    wb = openpyxl.load_workbook(rich_master)
+    for sheet in ("SO", "Notes"):
+        if sheet in wb.sheetnames:
+            del wb[sheet]
+    wb["Purchase"].title = "Purchase Register"
+    wb["Sales"].title = "Sales Bills"
+    wb["PO"].title = "Purchase Orders"
+    path = tmp_path / "data only.xlsx"
+    wb.save(path)
+
+    setup_admin(client)
+    batch = upload(client, path).json()
+    assert batch["summary"]["sheets"]["Purchase"] == "Purchase Register"
+    assert batch["summary"]["sheets"]["Sales"] == "Sales Bills"
+    assert batch["summary"]["counts"]["so"] == 0
+    client.post(f"/api/imports/{batch['id']}/confirm")
+    assert client.get("/api/reports", params={"as_of": AS_OF}).json()["dashboard"]["purchase_bills"] == 3
+    sheets = openpyxl.load_workbook(io.BytesIO(client.get("/api/master-sheet").content)).sheetnames
+    assert {"Purchase", "Sales", "PO", "SO", "Total Debtor Creditor", "masters", "Display"} <= set(sheets)
+
+
+def test_hosting_settings(tmp_path):
+    from server.config import normalize_database_url
+    assert normalize_database_url("postgres://u:p@h:5432/d") == "postgresql+psycopg://u:p@h:5432/d"
+    assert normalize_database_url("postgresql://u:p@h/d") == "postgresql+psycopg://u:p@h/d"
+    assert normalize_database_url("sqlite:///x.db") == "sqlite:///x.db"
+
+    s = Settings(data_dir=tmp_path, database_url=f"sqlite:///{tmp_path / 'h.db'}", secret_key="k" * 40,
+                 admin_username="Boss", admin_password=PASSWORD)
+    with TestClient(create_app(s)) as c:
+        c.headers.update(H)
+        assert c.get("/api/setup").json() == {"needs_first_admin": False}
+        assert c.post("/api/auth/login", json={"username": "boss", "password": PASSWORD}).json()["role"] == "admin"
+    with TestClient(create_app(s)) as c:  # a restart adds or changes no one
+        c.headers.update(H)
+        assert c.post("/api/auth/login", json={"username": "boss", "password": PASSWORD}).status_code == 200
+        assert len(c.get("/api/users").json()) == 1

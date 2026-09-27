@@ -27,44 +27,117 @@ The reports are:
 
 You can keep using Excel as well. Changes saved in Excel show up in the app within a few seconds.
 
+### Which one should I use?
+
+This repository has **two apps** that share the same report calculations:
+
+| | **Web app with logins** (new) | **Desktop app** (Streamlit, the original) |
+|---|---|---|
+| Who uses it | Several people, each with their own ID and password | One person on one computer |
+| Where the data lives | A database (PostgreSQL) | The Master Sheet Excel file itself |
+| How data gets in | Upload the workbook on the **Import** page | Enter transactions in the app, or save the file in Excel |
+| Master Sheet | Made for you from the database: **Download Master Sheet** | Is the working file |
+| How to start | [Put it online](#put-the-web-app-online-render) or [run it on your computer](#run-the-web-app-on-your-own-computer) | [Starting the app](#starting-the-app) |
+
 ---
 
-## Web app with logins (new, Phase 1)
+## The web app with logins
 
-A multi-user version of the reports runs as a website: people sign in with their own user ID and password, the
-data lives in a PostgreSQL database instead of one Excel file, and the reports are worked out from the database with
-the same calculations as above (the tests check that the numbers match the Excel file exactly).
+People sign in with their own user ID and password. The data lives in a database instead of one Excel file, and
+the reports are worked out from the database with the same calculations as the desktop app (the tests check that
+the numbers match the Excel file exactly).
 
 | Role | Can do |
 |---|---|
-| **admin** | Everything: import the Master Sheet, add / switch off users, reset passwords, product names, audit log |
-| **editor** | See every report (entering transactions in the web app comes in Phase 2) |
+| **admin** | Everything: import workbooks, add / switch off users, reset passwords, product names, audit log |
+| **editor** | See every report and download the Master Sheet (entering transactions in the web app comes next) |
 | **viewer** | Read-only: dashboard, reports, downloads |
 
-**Getting data in:** an admin opens **Import**, uploads the Master Sheet and sees what was found (rows per sheet,
-new parties and products, rows with a missing date / quantity / amount) before anything is saved. **Confirm** makes it
-the data behind every report. Each import replaces the previous one, which stays in the list and can be **restored**.
+### Put the web app online (Render)
 
-**Running it on a server** (Docker):
+[Render](https://render.com) runs the app and its database for you: no server to look after, HTTPS included, and
+it updates itself whenever a change is merged into this repository. Everything it needs is described in
+`render.yaml`, so setting it up is a few clicks:
+
+1. Go to <https://render.com> and **sign up with your GitHub account** (the one that owns this repository).
+2. In the Render dashboard click **New +** → **Blueprint**.
+3. Pick the **EXCEL_PROJECT** repository (click *Configure account* first if it isn't listed, and give Render
+   access to it).
+4. Render shows what it will create: the web app **business-reports** and the database **business-reports-db**.
+   It asks for one value, **ADMIN_PASSWORD**: type the password you want for the first admin account
+   (at least 8 characters). Keep it safe.
+5. Click **Deploy Blueprint** (or **Apply**). The first build takes several minutes.
+6. When the web app shows **Live**, open its address (it looks like `https://business-reports-xxxx.onrender.com`)
+   and sign in with user ID **admin** and the password from step 4.
+7. Change the password under **My account**, then add everyone else under **Users**.
+
+**What it costs:** Render bills monthly for the web app and the database plans in `render.yaml` (`starter` and
+`basic-256mb`, the smallest paid ones). See <https://render.com/pricing> for today's prices; the plans can be
+changed on the screen in step 4 or later in the dashboard. Render's free plans are fine for trying it out, but the
+free web app sleeps when nobody uses it and the free database is deleted after a while, so don't keep real data
+there.
+
+**Updates:** when a pull request is merged into this repository's default branch (the one picked in step 3), Render rebuilds and restarts the
+app by itself. Your data stays in the database.
+
+**Forgot the admin password?** In the Render dashboard open **business-reports** → **Shell** and run
+`python -m server.manage reset-password admin`.
+
+### Run the web app on your own computer
+
+With **Docker** (the same set-up as online, with its own PostgreSQL database):
+
+1. Install **Docker Desktop** from <https://www.docker.com/products/docker-desktop/> and start it.
+2. Download this repository (green **Code** button → **Download ZIP**, then unzip) and open a terminal in the folder.
+3. Copy `.env.example` to a new file named `.env` and put two long random values in it (the file explains how).
+4. Run:
+   ```bash
+   docker compose up -d --build
+   ```
+5. Open <http://localhost:8000>. The first visit asks you to create the admin account.
+
+To stop it: `docker compose down` (the data is kept). To update after a merge: download the new version and run
+step 4 again. On a server reached over the internet, put it behind HTTPS (for example Caddy or nginx) and set
+`SECURE_COOKIES=1` in `.env`.
+
+**Without Docker** (quick try-out, data in a local SQLite file under `data/`): install Python 3.10+ and
+Node.js 20+, then in the repository folder:
 ```bash
-cp .env.example .env          # put two long random values in it
-docker compose up -d --build  # starts PostgreSQL and the app on port 8000
+pip install -r requirements-server.txt
+cd web && npm install && npm run build && cd ..
+uvicorn server.main:create_app --factory --port 8000
 ```
-Open `http://<server>:8000`; the first visit asks you to create the admin account. Put it behind HTTPS (for example
-Caddy or nginx) before using it over the internet, then set `SECURE_COOKIES=1` in `.env`.
+and open <http://localhost:8000>.
 
-Useful commands (inside the app container: `docker compose exec app ...`):
+### Using the web app
+
+- **Getting data in:** an admin opens **Import** and uploads a workbook: either a full Master Sheet, or just the
+  data sheets (**Purchase**, **Sales**, **PO**, **SO**, and **Debit Notes** / **Credit Notes** if you use them).
+  Sheets named a little differently (`Purchase Register`, `Sales Bills`, `Purchase Orders` ...) are recognised,
+  and so is a purchase or sales sheet with any name, by its column headings. You see what was found (rows per
+  sheet, new parties and products, rows with a missing date / quantity / amount) before anything is saved.
+  **Confirm** makes it the data behind every report. Each import replaces the previous one, which stays in the
+  list and can be **restored**. Every column is kept, including ones the reports don't use.
+- **Download Master Sheet** (top of every report page) gives the complete Master Sheet built from the database,
+  laid out like the hand-made one: Main Display, Display, Purchase, PO, SO, Sales, Total Debtor Creditor and
+  masters (plus Debit Notes / Credit Notes when there are any), with the same columns and formulas (amounts,
+  pre-bill totals, bill amounts, brokerage, balance quantities, PSN numbers, the SUMIF balances and the Display
+  P&L). A figure that was typed over a formula stays as typed. Payment, TDS and debit / credit note columns of
+  **Total Debtor Creditor** are filled in with SUMIF formulas too, so its closing balances are complete.
+- **Download all reports (Excel)** gives the formatted report pack.
+
+Useful admin commands (online: Render **Shell**; with Docker: `docker compose exec app ...`):
 ```bash
 python -m server.manage add-user <id> --role admin|editor|viewer   # asks for the password
 python -m server.manage reset-password <id>
 python -m server.manage import "Master Sheet.xlsx"                  # import without the web page
 ```
 
-The Streamlit app below keeps working unchanged while the web app grows.
-
 ---
 
-## For everyday users
+## The desktop app (Streamlit)
+
+For everyday users on one computer; the Master Sheet file is the data.
 
 ### First-time setup (once per computer)
 1. Install **Python 3.10 or newer** from <https://www.python.org/downloads/>.
@@ -228,10 +301,12 @@ server/main.py          FastAPI routes: sign-in, users, imports, reports, produc
 server/auth.py          bcrypt passwords, signed session cookie, lockout after wrong passwords, role checks
 server/db.py            database tables (one per Master Sheet sheet, plus users, imports, audit log)
 server/store.py         Master Sheet data <-> database; rebuilds the loader's tables for the report code
-server/imports.py       upload -> preview -> confirm / discard / restore
+server/imports.py       upload -> preview -> confirm / discard / restore (uploaded files are kept in the database)
+mis_reports/master_sheet.py   builds the Master Sheet workbook (all sheets, formulas and their values) from the data
 server/reports_api.py   runs mis_reports on the database data, caches results, turns them into JSON
 web/                    React + AG Grid pages (npm run dev, npm run build -> web/dist, served by the backend)
-tests/test_server.py    roles, sign-in, import and "database reports equal file reports"
+tests/test_server.py    roles, sign-in, import, "database reports equal file reports" and the generated Master Sheet
+render.yaml             Render blueprint (web app + PostgreSQL); Dockerfile and docker-compose.yml for Docker
 ```
 
 ```bash
@@ -252,7 +327,8 @@ python generate_reports.py --input path/to/Master.xlsx --as-of 2026-09-30
 Columns are found by their header text on the header row (the row containing `PARTY NAME`),
 so adding or moving columns in the Master Sheet does not break the reports.
 The reader uses the values Excel last calculated. A file generated by another program and never
-opened in Excel should be opened and saved in Excel first.
+opened in Excel should be opened and saved in Excel first (the Master Sheet the web app generates already
+carries its calculated values).
 The `input/` and `output/` folders are git-ignored, so business data is never committed.
 
 New invoice rows copy the formula most of the last 30 rows use in each column (like Excel's

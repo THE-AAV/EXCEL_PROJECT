@@ -5,16 +5,17 @@ kept, so an earlier import can be brought back with 'restore'.
 """
 from __future__ import annotations
 
+import io
 import re
-import uuid
+import warnings
 from pathlib import Path
 
 import pandas as pd
 from fastapi import HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import Connection
 
-from mis_reports.loader import MasterData, load_master, party_key
+from mis_reports.loader import MasterData, find_sheets, load_master, party_key
 from mis_reports.reports import Filters, data_checks, product_name
 
 from . import db, store
@@ -28,14 +29,29 @@ def safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._ ()-]+", "_", base)[:200] or "workbook.xlsx"
 
 
-def read_workbook(path: Path) -> MasterData:
+def read_workbook(content: bytes) -> MasterData:
     try:
-        return load_master(path)
+        return load_master(io.BytesIO(content))
     except ValueError as e:  # missing sheets / header rows
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"This workbook can't be read: {e}")
     except Exception as e:  # not an Excel file, corrupt zip, ...
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             f"This file could not be opened as an Excel workbook ({type(e).__name__})")
+
+
+def sheets_found(content: bytes) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return find_sheets(pd.ExcelFile(io.BytesIO(content), engine="openpyxl"))
+
+
+def file_content(conn: Connection, settings, batch) -> bytes | None:
+    """The uploaded workbook: kept in the database (older imports: in the data folder)."""
+    row = conn.execute(select(db.import_files.c.content).where(db.import_files.c.batch_id == batch.id)).first()
+    if row is not None:
+        return bytes(row.content)
+    path = settings.upload_dir / batch.stored_as
+    return path.read_bytes() if batch.stored_as != "db" and path.exists() else None
 
 
 def _names(df: pd.DataFrame, col: str, key, show) -> dict:
@@ -84,29 +100,27 @@ def create_preview(engine, settings, user, filename: str, content: bytes) -> dic
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Please upload an Excel file (.xlsx or .xlsm)")
     if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"The file is larger than {MAX_UPLOAD_MB} MB")
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid.uuid4().hex}{Path(name).suffix.lower()}"
-    path = settings.upload_dir / stored
-    path.write_bytes(content)
-    try:
-        data = read_workbook(path)
-    except HTTPException:
-        path.unlink(missing_ok=True)
-        raise
+    data = read_workbook(content)
+    found = sheets_found(content)
     with engine.begin() as conn:
         has_current = conn.execute(select(db.import_batches.c.id)
                                    .where(db.import_batches.c.status == "active")).first() is not None
         current = store.load_data(conn) if has_current else None
-        summary = summarise(data, current, store.load_aliases(conn))
+        summary = summarise(data, current, store.load_aliases(conn)) | {"sheets": found}
         batch_id = conn.execute(db.import_batches.insert().values(
-            kind="master_sheet", filename=name, stored_as=stored, status="pending", summary=summary,
+            kind="master_sheet", filename=name, stored_as="db", status="pending", summary=summary,
             warnings=list(data.warnings), created_by=user["id"], created_at=db.utcnow())).inserted_primary_key[0]
+        conn.execute(db.import_files.insert().values(batch_id=batch_id, content=content))
         store.audit(conn, user, "import.preview", batch=batch_id, filename=name)
         return batch_row(conn, batch_id)
 
 
 def _load_into_db(engine, settings, user, batch, action: str) -> None:
-    data = read_workbook(settings.upload_dir / batch.stored_as)
+    with engine.connect() as conn:
+        content = file_content(conn, settings, batch)
+    if content is None:
+        raise HTTPException(status.HTTP_410_GONE, "The file of this import is no longer kept")
+    data = read_workbook(content)
     with engine.begin() as conn:
         store.replace_all(conn, data, batch.id)
         conn.execute(update(db.import_batches).where(db.import_batches.c.status == "active")
@@ -146,8 +160,8 @@ def discard(engine, settings, user, batch_id: int) -> None:
         if b.status != "pending":
             raise HTTPException(status.HTTP_409_CONFLICT, "Only an import that was not confirmed can be discarded")
         conn.execute(update(db.import_batches).where(db.import_batches.c.id == batch_id).values(status="discarded"))
+        conn.execute(delete(db.import_files).where(db.import_files.c.batch_id == batch_id))
         store.audit(conn, user, "import.discard", batch=batch_id, filename=b.filename)
-    (settings.upload_dir / b.stored_as).unlink(missing_ok=True)
 
 
 def batch_row(conn: Connection, batch_id: int) -> dict:
