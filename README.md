@@ -101,13 +101,19 @@ step 4 again. On a server reached over the internet, put it behind HTTPS (for ex
 `SECURE_COOKIES=1` in `.env`.
 
 **Without Docker** (quick try-out, data in a local SQLite file under `data/`): install Python 3.10+ and
-Node.js 20+, then in the repository folder:
-```bash
-pip install -r requirements-server.txt
-cd web && npm install && npm run build && cd ..
-uvicorn server.main:create_app --factory --port 8000
+Node.js 20+, then open a terminal in the repository folder (on Windows: PowerShell or Command Prompt) and run
+these lines one at a time:
 ```
-and open <http://localhost:8000>.
+pip install -r requirements-server.txt
+cd web
+npm install
+npm run build
+cd ..
+python -m uvicorn server.main:create_app --factory --port 8000
+```
+and open <http://localhost:8000>. The first visit asks you to create the admin account. If PowerShell says
+*running scripts is disabled on this system* for `npm`, type `npm.cmd` instead of `npm`. To start the app again
+later, only the last line is needed; after downloading a newer version, run all the lines again.
 
 ### Using the web app
 
