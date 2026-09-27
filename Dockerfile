@@ -20,5 +20,5 @@ USER app
 ENV PORT=8000
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/api/health')"
-# PORT is set by hosting services such as Render; 8000 otherwise
+# PORT can be set by a hosting service; 8000 otherwise
 CMD ["sh", "-c", "exec uvicorn server.main:create_app --factory --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

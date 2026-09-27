@@ -30,6 +30,8 @@ SHEETS = {
     "SO": ("SO", "Contract No", ORDER_WRITE_COLUMNS, "commodity"),
 }
 
+ORDER_BALANCE_FIELDS = {"revised_qty", "bal_qty_mt", "amount", "status"}
+
 # Formulas used for new invoice rows where the sheet's own rows are not a reliable guide.
 # {g} is replaced by the GST rate. Other formula columns copy the pattern most recent rows use.
 FIXED_FORMULAS = {
@@ -168,7 +170,7 @@ class MasterFile:
         else:
             contract_no = next_number(existing)
         values = {"cancel_qty": 0, "recd_qty": 0, "qty_diff": 0, **fields, "contract_no": contract_no}
-        formulas = usual_formulas(sh, used[-30:], _all_columns(sh, hdr))
+        formulas = _formulas(sh, hdr, kind, used)
         for f, col in cols.items():
             if f in values and _filled(values[f]):
                 sh.set(f"{col}{r}", values[f], template_row=tmpl)
@@ -223,7 +225,7 @@ class MasterFile:
             if f not in cols:
                 raise EntryError(f"Column for '{f}' not found in the {kind} sheet")
         tmpl = last if last > hdr else None
-        base_pattern = usual_formulas(sh, used[-30:], _all_columns(sh, hdr))
+        base_pattern = _formulas(sh, hdr, kind, used)
         rows = []
         for i, line in enumerate(lines):
             r = last + 1 + i
@@ -507,6 +509,15 @@ def _filled(v) -> bool:
 
 def _fmt(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else str(v)
+
+
+def _formulas(sheet, hdr: int, kind: str, used: list[int]) -> dict:
+    """For each column, the formula new rows get: the one recent rows use. Where they have none, the Master Sheet's
+    own formula is used on an empty sheet, and for an order's balance and status (needed to bill against it)."""
+    from .master_sheet import layout_formulas
+    headers = {split_ref(ref)[0]: sheet.value(ref) for ref in sheet.cells if split_ref(ref)[1] == hdr}
+    only = None if not used else ORDER_BALANCE_FIELDS if kind in ("PO", "SO") else set()
+    return {**layout_formulas(kind, headers, only), **usual_formulas(sheet, used[-30:], _all_columns(sheet, hdr))}
 
 
 def _all_columns(sheet, hdr: int) -> list[str]:

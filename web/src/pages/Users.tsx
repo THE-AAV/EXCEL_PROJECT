@@ -16,6 +16,9 @@ export default function Users() {
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({ username: "", full_name: "", role: "viewer" as Role, password: "" });
 
+  const [office, setOffice] = useState<{ urls: string[]; live_file: string; data_dir: string } | null>(null);
+  useEffect(() => { api<typeof office>("/office").then(setOffice).catch(() => undefined); }, []);
+
   const refresh = () => api<User[]>("/users").then(setUsers).catch((e) => setError(e.message));
   useEffect(() => {
     refresh();
@@ -45,6 +48,16 @@ export default function Users() {
 
   return (
     <>
+      {office && (
+        <div className="card">
+          <h3>Share the app with your office</h3>
+          <p className="hint">Add each person below, then give them their user ID, password and this address to open
+            in their browser (on the same office network or Wi-Fi):</p>
+          <ul className="urls">{office.urls.map((u) => <li key={u}><code>{u}</code></li>)}</ul>
+          <p className="hint">The Master Sheet with every entry is kept up to date on the computer running the app:
+            <br /><code>{office.live_file}</code><br />The data is in <code>{office.data_dir}</code>; when the app is started with Start_Web_App.bat a copy is saved every day in its <code>backups</code> folder.</p>
+        </div>
+      )}
       <h2>Users and roles</h2>
       <div className="role-help">
         {(Object.keys(ROLE_HELP) as Role[]).map((r) => <div key={r}><span className={`badge role-${r}`}>{r}</span> {ROLE_HELP[r]}</div>)}

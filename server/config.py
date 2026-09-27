@@ -38,7 +38,7 @@ class Settings:
     max_failed_logins: int = int(os.environ.get("MAX_FAILED_LOGINS", "5"))
     lockout_minutes: int = int(os.environ.get("LOCKOUT_MINUTES", "15"))
     secure_cookies: bool = os.environ.get("SECURE_COOKIES", "0") == "1"
-    # optional: creates this admin on a brand-new installation (used by the Render set-up)
+    # optional: creates this admin on a brand-new installation instead of the set-up page
     admin_username: str = os.environ.get("ADMIN_USERNAME", "admin")
     admin_password: str = os.environ.get("ADMIN_PASSWORD", "")
 

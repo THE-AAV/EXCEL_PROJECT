@@ -15,15 +15,16 @@ const theme = themeQuartz.withParams({
   headerHeight: 38,
 });
 
-export type Kind = "text" | "money" | "qty" | "rate" | "pct" | "date" | "int";
+export type Kind = "text" | "money" | "qty" | "num" | "rate" | "pct" | "date" | "int";
 
-/** [field, header, kind]; money / qty columns get a total in the pinned bottom row. */
+/** [field, header, kind]; money / qty / num columns get a total in the pinned bottom row. */
 export type Col = [string, string, Kind?];
 
 const FORMAT: Record<Kind, (v: unknown) => string> = {
   text: (v) => (v == null ? "" : String(v)),
   money: inr,
   qty: inr,
+  num: rate,
   int: inr,
   rate,
   pct,
@@ -39,10 +40,14 @@ interface Props {
   exportName?: string;
   onRowClick?: (row: Row) => void;
   emptyText?: string;
+  /** many columns: fixed widths with sideways scrolling instead of squeezing them to fit */
+  wide?: boolean;
+  /** fields kept in view on the left while scrolling sideways */
+  pin?: string[];
 }
 
 export default function DataGrid({ rows, cols, height = 480, totals = true, search = true, exportName,
-  onRowClick, emptyText = "Nothing to show" }: Props) {
+  onRowClick, emptyText = "Nothing to show", wide = false, pin = [] }: Props) {
   const apiRef = useRef<GridApi | null>(null);
   const [text, setText] = useState("");
   const [shown, setShown] = useState<Row[]>(rows);
@@ -66,17 +71,19 @@ export default function DataGrid({ rows, cols, height = 480, totals = true, sear
       filterParams: kind === "date" ? { comparator: dateCompare } : undefined,
       comparator: kind === "date" ? (a: string, b: string) => (a ?? "").localeCompare(b ?? "") : undefined,
       minWidth: kind === "text" ? 140 : 110,
-      flex: kind === "text" ? 1.4 : 1,
+      flex: wide ? undefined : kind === "text" ? 1.4 : 1,
+      width: wide ? (kind === "text" ? 170 : 130) : undefined,
+      pinned: pin.includes(field) ? "left" : undefined,
       tooltipValueGetter: kind === "text" ? (p) => (p.value == null ? "" : String(p.value)) : undefined,
     } as ColDef;
-  }), [cols]);
+  }), [cols, wide, pin.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pinned = useMemo(() => {
     if (!totals || !shown.length) return undefined;
     const sums: Row = {};
     let any = false;
     cols.forEach(([field, , kind], i) => {
-      if (kind === "money" || kind === "qty") {
+      if (kind === "money" || kind === "qty" || kind === "num") {
         sums[field] = shown.reduce((s, r) => s + (typeof r[field] === "number" ? (r[field] as number) : 0), 0);
         any = true;
       } else if (i === 0) sums[field] = "Total";

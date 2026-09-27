@@ -59,6 +59,11 @@ interface DataState {
   error: string;
   reload: () => void;
   filterQuery: string;
+  /** the data version; changes when anyone saves an entry or an import */
+  version: string;
+  /** a short note when someone else changed the data ("Sales invoice 12 saved by ravi") */
+  news: string;
+  clearNews: () => void;
 }
 
 const DataCtx = createContext<DataState>(null!);
@@ -90,8 +95,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
+  // live updates: a cheap check every few seconds; when the data changed, everything reloads
+  const [version, setVersion] = useState("");
+  const [news, setNews] = useState("");
+  const { user } = useAuth();
+  useEffect(() => {
+    let last = "";
+    const check = () => {
+      if (document.hidden) return;
+      api<{ version: string; last_change: string | null; by: string | null }>("/version").then((v) => {
+        if (last && v.version !== last) {
+          setTick((t) => t + 1);
+          if (v.by !== user?.username && v.last_change) setNews(`${v.last_change}${v.by ? ` (by ${v.by})` : ""}`);
+        }
+        last = v.version;
+        setVersion(v.version);
+      }).catch(() => undefined);
+    };
+    check();
+    const id = window.setInterval(check, 8000);
+    document.addEventListener("visibilitychange", check);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", check); };
+  }, [tick, user?.username]);
+  const clearNews = useCallback(() => setNews(""), []);
+
   return (
-    <DataCtx.Provider value={{ filters, setFilters, status, reports, loading, error, reload, filterQuery }}>
+    <DataCtx.Provider value={{ filters, setFilters, status, reports, loading, error, reload, filterQuery, version, news,
+      clearNews }}>
       {children}
     </DataCtx.Provider>
   );

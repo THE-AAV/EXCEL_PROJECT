@@ -442,6 +442,19 @@ def _write_display(ws, product: str):
         ws.column_dimensions[col].width = w
 
 
+def layout_formulas(kind: str, headers: dict[str, str], only: set[str] | None = None) -> dict[str, str]:
+    """The Master Sheet's own formulas (as row patterns) for a sheet laid out exactly like the one built here, so rows
+    added to a sheet whose rows hold no formulas yet (a new or typed-over sheet) still get their balances and totals.
+    only: the stored fields to give formulas for (all when None)."""
+    from .xlsx_edit import relative_pattern
+    layout = {"Purchase": PURCHASE, "Sales": SALES, "PO": ORDERS, "SO": ORDERS}.get(kind)
+    if layout is None or any(_norm(headers.get(get_column_letter(i + 1)) or "") != _norm(c.header)
+                             for i, c in enumerate(layout)):
+        return {}
+    return {get_column_letter(i + 1): relative_pattern(c.formula.format(r=100), 100)
+            for i, c in enumerate(layout) if c.formula and c.calc is not None and (only is None or c.field in only)}
+
+
 def build_master_sheet(data: MasterData) -> bytes:
     """The Master Sheet workbook for `data`, as .xlsx bytes."""
     cache = _Cache()

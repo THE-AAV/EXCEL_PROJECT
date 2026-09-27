@@ -18,7 +18,7 @@ from mis_reports.excel_export import build_workbook
 from mis_reports.master_sheet import build_master_sheet
 from mis_reports.pipeline import load_aliases as csv_aliases
 
-from . import auth, db, imports, store
+from . import auth, db, entries, imports, sheets, store
 from .config import BASE, Settings
 from .reports_api import ReportCache, report_json, to_json
 
@@ -79,6 +79,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db.init_db(engine, alias_seed=csv_aliases())
     _first_admin_from_settings(engine, settings)
     cache = ReportCache(engine)
+    workbooks = entries.Workbooks(engine)
+    live = entries.LiveFile(settings.data_dir / "Master Sheet (live).xlsx", workbooks)
 
     app = FastAPI(title="Business Reports", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.settings, app.state.engine, app.state.cache = settings, engine, cache
@@ -227,8 +229,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/imports/{batch_id}/confirm")
     def confirm_import(batch_id: int, user=Depends(admin)):
-        imports.confirm(engine, settings, user, batch_id)
+        with entries.LOCK:   # not while an entry is being saved
+            imports.confirm(engine, settings, user, batch_id)
         cache.clear()
+        live.write()
         with engine.connect() as conn:
             return to_json(imports.batch_row(conn, batch_id))
 
@@ -239,8 +243,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/imports/{batch_id}/restore")
     def restore_import(batch_id: int, user=Depends(admin)):
-        imports.restore(engine, settings, user, batch_id)
+        with entries.LOCK:
+            imports.restore(engine, settings, user, batch_id)
         cache.clear()
+        live.write()
         with engine.connect() as conn:
             return to_json(imports.batch_row(conn, batch_id))
 
@@ -284,6 +290,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(build_workbook(rs), headers={"Content-Disposition": f'attachment; filename="{name}"'},
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    # ------------------------------------------------------------------ entering transactions
+    @app.get("/api/entry/context")
+    def entry_context(_=Depends(editor)):
+        _, _, aliases = cache.data()
+        return to_json(entries.context(workbooks, aliases))
+
+    @app.post("/api/entry/{action}")
+    def save_entry(action: str, body: dict, user=Depends(editor)):
+        result = entries.save_entry(engine, workbooks, user, action, body)
+        live.write(workbooks.get()[1])
+        return to_json(result)
+
+    @app.post("/api/entry-undo")
+    def undo_entry(user=Depends(editor)):
+        result = entries.undo_last(engine, workbooks, user)
+        live.write()
+        return result
+
+    @app.get("/api/entry-recent")
+    def recent_entries(_=Depends(viewer)):
+        with engine.connect() as conn:
+            return to_json(entries.recent(conn))
+
+    @app.get("/api/version")
+    def data_version(_=Depends(viewer)):
+        """Cheap check the pages make every few seconds to pick up changes other people save."""
+        with engine.connect() as conn:
+            b = conn.execute(select(db.import_batches.c.id, db.import_batches.c.created_by, db.import_batches.c.filename)
+                             .where(db.import_batches.c.status == "active")).first()
+            who = conn.execute(select(db.users.c.username).where(db.users.c.id == b.created_by)).scalar() if b else None
+            return {"version": store.data_version(conn), "last_change": b.filename if b else None, "by": who}
+
+    @app.get("/api/sheets")
+    def sheet_rows(_=Depends(viewer)):
+        _, data, _ = cache.data()
+        return to_json(sheets.all_sheets(data))
+
     @app.get("/api/master-sheet")
     def master_sheet(user=Depends(viewer)):
         """The Master Sheet workbook (Purchase, Sales, PO, SO, Total Debtor Creditor, masters, Display),
@@ -315,6 +358,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return get_aliases()
 
     # ------------------------------------------------------------------ audit log (admin)
+    @app.get("/api/office")
+    def office_info(request: Request, _=Depends(admin)):
+        """The addresses other people in the office use to open the app, and where the files are kept."""
+        from .office import office_urls
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        return {"urls": office_urls(port), "live_file": str(live.path), "data_dir": str(settings.data_dir),
+                "local": request.client is not None and request.client.host in ("127.0.0.1", "::1")}
+
     @app.get("/api/audit")
     def audit_log(limit: int = Query(200, le=1000), _=Depends(admin)):
         with engine.connect() as conn:
