@@ -180,5 +180,6 @@ def batch_dict(b, names: dict) -> dict:
 
 def list_batches(conn: Connection, limit: int = 50) -> list[dict]:
     names = _usernames(conn)
-    rows = conn.execute(select(db.import_batches).order_by(db.import_batches.c.id.desc()).limit(limit))
+    rows = conn.execute(select(db.import_batches).where(db.import_batches.c.kind != "entry")
+                        .order_by(db.import_batches.c.id.desc()).limit(limit))
     return [batch_dict(b, names) for b in rows]

@@ -6,13 +6,18 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import hosting
+
 BASE = Path(__file__).resolve().parent.parent
 
 
-def _secret(data_dir: Path) -> str:
-    """SECRET_KEY from the environment, or one generated once and kept in the data folder."""
+def _secret(data_dir: Path, database_url: str) -> str:
+    """SECRET_KEY from the environment, or one generated once and kept in the data folder. With an online
+    database the app keeps it there instead (see main.create_app), because free hosts wipe their disk."""
     if os.environ.get("SECRET_KEY"):
         return os.environ["SECRET_KEY"]
+    if not database_url.startswith("sqlite"):
+        return ""
     path = data_dir / "secret_key"
     if not path.exists():
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -37,8 +42,10 @@ class Settings:
     session_hours: float = float(os.environ.get("SESSION_HOURS", "12"))
     max_failed_logins: int = int(os.environ.get("MAX_FAILED_LOGINS", "5"))
     lockout_minutes: int = int(os.environ.get("LOCKOUT_MINUTES", "15"))
-    secure_cookies: bool = os.environ.get("SECURE_COOKIES", "0") == "1"
-    # optional: creates this admin on a brand-new installation (used by the Render set-up)
+    # on for internet hosts (they use https), off for the office network (plain http)
+    secure_cookies: bool = field(default_factory=lambda: os.environ.get(
+        "SECURE_COOKIES", "1" if hosting.host() else "0") == "1")
+    # optional: creates this admin on a brand-new installation instead of the set-up page
     admin_username: str = os.environ.get("ADMIN_USERNAME", "admin")
     admin_password: str = os.environ.get("ADMIN_PASSWORD", "")
 
@@ -48,7 +55,7 @@ class Settings:
         self.database_url = self.database_url or os.environ.get("DATABASE_URL") or \
             f"sqlite:///{self.data_dir / 'business.db'}"
         self.database_url = normalize_database_url(self.database_url)
-        self.secret_key = self.secret_key or _secret(self.data_dir)
+        self.secret_key = self.secret_key or _secret(self.data_dir, self.database_url)
 
     @property
     def upload_dir(self) -> Path:

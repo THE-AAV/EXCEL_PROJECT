@@ -29,109 +29,169 @@ You can keep using Excel as well. Changes saved in Excel show up in the app with
 
 ### Which one should I use?
 
-This repository has **two apps** that share the same report calculations:
+This repository has **two apps** that share the same report calculations. Both are free.
 
 | | **Web app with logins** (new) | **Desktop app** (Streamlit, the original) |
 |---|---|---|
-| Who uses it | Several people, each with their own ID and password | One person on one computer |
-| Where the data lives | A database (PostgreSQL) | The Master Sheet Excel file itself |
-| How data gets in | Upload the workbook on the **Import** page | Enter transactions in the app, or save the file in Excel |
-| Master Sheet | Made for you from the database: **Download Master Sheet** | Is the working file |
-| How to start | [Put it online](#put-the-web-app-online-render) or [run it on your computer](#run-the-web-app-on-your-own-computer) | [Starting the app](#starting-the-app) |
+| Who uses it | Everyone, each with their own ID and password, from any computer or phone (online, or on the office network) | One person on one computer |
+| Where the data lives | A free online database (or a database file on the office computer that runs the app) | The Master Sheet Excel file itself |
+| Entering transactions | **Enter transactions** page: all 9 steps, same as the desktop app | **Enter transactions** page |
+| Master Sheet | Kept up to date for you, plus **Download Master Sheet** | Is the working file |
+| Who changed what | **Audit log**: every entry with the person, time and details | Activity log file |
+| How to start | Online for everyone ([details](#put-it-online-for-free-no-card-needed)), or double-click **`Start_Web_App.bat`** on an office computer ([details](#run-it-for-the-whole-office-free)) | Double-click **`Start_Reports_App.bat`** ([details](#starting-the-app)) |
 
 ---
 
 ## The web app with logins
 
-People sign in with their own user ID and password. The data lives in a database instead of one Excel file, and
-the reports are worked out from the database with the same calculations as the desktop app (the tests check that
-the numbers match the Excel file exactly).
+People sign in with their own user ID and password. Every entry anyone saves shows up for everyone within a few
+seconds, on the dashboard, the reports and the Sheets page, and the admin can see who made each change.
 
 | Role | Can do |
 |---|---|
-| **admin** | Everything: import workbooks, add / switch off users, reset passwords, product names, audit log |
-| **editor** | See every report and download the Master Sheet (entering transactions in the web app comes next) |
-| **viewer** | Read-only: dashboard, reports, downloads |
+| **admin** | Everything: users, importing workbooks, files, product names, the audit log |
+| **editor** | Enter transactions (and undo their last entry), see every report and file, download |
+| **viewer** | Read-only: dashboard, reports, sheets, files, downloads |
 
-### Put the web app online (Render)
+On the **Users** page the admin also ticks **Files: can change** for each person who may upload, rename, move and
+delete files (admins always can; everyone else can look at and download them). Switching a user off takes their
+access away at once.
 
-[Render](https://render.com) runs the app and its database for you: no server to look after, HTTPS included, and
-it updates itself whenever a change is merged into this repository. Everything it needs is described in
-`render.yaml`, so setting it up is a few clicks:
+### Put it online for free (no card needed)
 
-1. Go to <https://render.com> and **sign up with your GitHub account** (the one that owns this repository).
-2. In the Render dashboard click **New +** → **Blueprint**.
-3. Pick the **EXCEL_PROJECT** repository (click *Configure account* first if it isn't listed, and give Render
-   access to it).
-4. Render shows what it will create: the web app **business-reports** and the database **business-reports-db**.
-   It asks for one value, **ADMIN_PASSWORD**: type the password you want for the first admin account
-   (at least 8 characters). Keep it safe.
-5. Click **Deploy Blueprint** (or **Apply**). The first build takes several minutes.
-6. When the web app shows **Live**, open its address (it looks like `https://business-reports-xxxx.onrender.com`)
-   and sign in with user ID **admin** and the password from step 4.
-7. Change the password under **My account**, then add everyone else under **Users**.
+The app runs on **Koyeb** (a free home for web apps) and keeps the data in **Neon** (a free online database) and
+the uploaded files in a private **Hugging Face** folder (free storage). None of them normally asks for a card.
+Nobody has to install anything: people open a web address and sign in. It takes about 20 minutes, all in the
+browser.
 
-**What it costs:** Render bills monthly for the web app and the database plans in `render.yaml` (`starter` and
-`basic-256mb`, the smallest paid ones). See <https://render.com/pricing> for today's prices; the plans can be
-changed on the screen in step 4 or later in the dashboard. Render's free plans are fine for trying it out, but the
-free web app sleeps when nobody uses it and the free database is deleted after a while, so don't keep real data
-there.
+**1. The database (Neon)**
+1. Go to <https://neon.com> and click **Sign up** (with Google, GitHub or an email address).
+2. Create a project: any name (for example `business`), and the region closest to you.
+3. On the project page click **Connect**, and copy the **connection string** (it starts with `postgresql://`).
+   Keep it somewhere private for step 3.
 
-**Updates:** when a pull request is merged into this repository's default branch (the one picked in step 3), Render rebuilds and restarts the
-app by itself. Your data stays in the database.
+**2. File storage (Hugging Face)**
+1. Go to <https://huggingface.co/join> and make an account (confirm your email address).
+2. Click your picture (top right) → **Settings** → **Access Tokens** → **Create new token**. Choose **Write**,
+   name it `business-app`, click **Create**, and copy the token (it starts with `hf_`).
 
-**Forgot the admin password?** In the Render dashboard open **business-reports** → **Shell** and run
-`python -m server.manage reset-password admin`.
+You don't create anything else there: the app makes a private folder called `business-files` by itself.
 
-### Run the web app on your own computer
+**3. The app (Koyeb)**
+1. Go to <https://app.koyeb.com/auth/signup> and sign up (with GitHub or an email address).
+2. Click this button (it fills in everything it can):
 
-With **Docker** (the same set-up as online, with its own PostgreSQL database):
+   [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=business-reports&type=git&repository=github.com/THE-AAV/EXCEL_PROJECT&branch=claude%2Fexcel-debtor-creditor-pl-reports-o0o0zm&builder=dockerfile&instance_type=free&regions=was&ports=8000%3Bhttp%3B%2F&env%5BDATABASE_URL%5D=&env%5BHF_TOKEN%5D=&env%5BHF_FILES_REPO%5D=business-files&env%5BADMIN_PASSWORD%5D=)
 
-1. Install **Docker Desktop** from <https://www.docker.com/products/docker-desktop/> and start it.
-2. Download this repository (green **Code** button → **Download ZIP**, then unzip) and open a terminal in the folder.
-3. Copy `.env.example` to a new file named `.env` and put two long random values in it (the file explains how).
-4. Run:
-   ```bash
-   docker compose up -d --build
-   ```
-5. Open <http://localhost:8000>. The first visit asks you to create the admin account.
+3. Under **Environment variables**, fill in the empty ones:
 
-To stop it: `docker compose down` (the data is kept). To update after a merge: download the new version and run
-step 4 again. On a server reached over the internet, put it behind HTTPS (for example Caddy or nginx) and set
-`SECURE_COOKIES=1` in `.env`.
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | the Neon connection string from step 1.3 |
+   | `HF_TOKEN` | the token from step 2.2 |
+   | `ADMIN_PASSWORD` | the password you will sign in with (at least 8 characters) |
 
-**Without Docker** (quick try-out, data in a local SQLite file under `data/`): install Python 3.10+ and
-Node.js 20+, then in the repository folder:
-```bash
-pip install -r requirements-server.txt
-cd web && npm install && npm run build && cd ..
-uvicorn server.main:create_app --factory --port 8000
-```
-and open <http://localhost:8000>.
+   Leave `HF_FILES_REPO` as `business-files`. Check that the instance says **Free**, then click **Deploy**.
+4. Koyeb builds the app (about 5 minutes) and then shows **Healthy**. Your app's address is shown at the top,
+   ending in `.koyeb.app`. Open it and sign in as **admin** with the password from step 3.
+5. **Import** your workbook, add people on **Users** (the page also shows the address to share), and give them
+   the address and their password.
+
+**Good to know**
+- Everything is kept outside Koyeb, so restarts lose nothing: the data in Neon, the uploaded files in your
+  private Hugging Face folder (free space: 100 GB; one file can be up to 1 GB in the app).
+- If nobody opens the app for an hour it goes to sleep. The next visit wakes it up, which takes about a minute.
+- **Getting a newer version:** in Koyeb open the service and click **Redeploy**.
+- If Koyeb ever asks for a card (it does this only when it can't tell you are a real person), stop there and use
+  [Run it for the whole office](#run-it-for-the-whole-office-free) instead.
+- Advanced: the app also runs on any other host that builds the `Dockerfile`. Give it the same three settings.
+
+### Run it for the whole office (free)
+
+One computer in the office runs the app; everyone else just opens it in their browser. There is nothing to pay
+for and no account to create anywhere.
+
+**On the office computer** (Windows; it has to be switched on while people use the app):
+
+1. Install **Python 3.10 or newer** from <https://www.python.org/downloads/>. On the first installer screen tick
+   **"Add Python to PATH"**.
+2. Download this repository: green **Code** button → **Download ZIP**, then unzip it (for example into Documents).
+3. Double-click **`Start_Web_App.bat`** in that folder. The first time it sets itself up, which takes a few
+   minutes.
+4. If Windows asks whether Python may use networks, tick **Private networks** and click **Allow**. (This is what
+   lets the other computers reach the app.)
+5. The browser opens the app. The first time, create the **admin** account (your own user ID and password).
+6. The black window shows the address for everyone else, like `http://192.168.1.20:8000`. Keep that window open;
+   closing it stops the app. The same address is shown in the app under **Users**.
+
+**Getting started in the app**
+
+1. **Import** (admin): upload your Master Sheet, or a workbook with just the Purchase, Sales, PO and SO sheets.
+   Check the preview and click **Confirm**. (You can also start empty and enter everything in the app.)
+2. **Users** (admin): add each person with a user ID, a password and a role. Give them the address from step 6.
+3. From then on, everyone enters transactions on **Enter transactions**, and the reports, the **Sheets** page and
+   the Master Sheet file update by themselves.
+
+**Where things are kept** (all in the `data` folder next to `Start_Web_App.bat`):
+- `business.db`: all the data. Copied every day into `data/backups` (the last 30 days are kept).
+- `Master Sheet (live).xlsx`: the Master Sheet with every entry, rewritten after each change. Open it in Excel to
+  look at it; make changes in the app. (While it is open in Excel, Windows won't let it be replaced, so it
+  catches up shortly after you close it.)
+
+**Next day:** double-click `Start_Web_App.bat` again. **Getting a newer version:** download the ZIP again, unzip
+it over the old folder (the `data` folder is kept), and double-click `Start_Web_App.bat`.
+
+**Forgot the admin password?** Close the app window, then open a Command Prompt in the folder and run
+`.venv\Scripts\python -m server.manage reset-password <your user ID>`.
+
+On a Mac or Linux computer use `./start_web_app.sh` instead of the `.bat` file.
 
 ### Using the web app
 
-- **Getting data in:** an admin opens **Import** and uploads a workbook: either a full Master Sheet, or just the
-  data sheets (**Purchase**, **Sales**, **PO**, **SO**, and **Debit Notes** / **Credit Notes** if you use them).
-  Sheets named a little differently (`Purchase Register`, `Sales Bills`, `Purchase Orders` ...) are recognised,
-  and so is a purchase or sales sheet with any name, by its column headings. You see what was found (rows per
-  sheet, new parties and products, rows with a missing date / quantity / amount) before anything is saved.
-  **Confirm** makes it the data behind every report. Each import replaces the previous one, which stays in the
-  list and can be **restored**. Every column is kept, including ones the reports don't use.
-- **Download Master Sheet** (top of every report page) gives the complete Master Sheet built from the database,
-  laid out like the hand-made one: Main Display, Display, Purchase, PO, SO, Sales, Total Debtor Creditor and
-  masters (plus Debit Notes / Credit Notes when there are any), with the same columns and formulas (amounts,
-  pre-bill totals, bill amounts, brokerage, balance quantities, PSN numbers, the SUMIF balances and the Display
-  P&L). A figure that was typed over a formula stays as typed. Payment, TDS and debit / credit note columns of
-  **Total Debtor Creditor** are filled in with SUMIF formulas too, so its closing balances are complete.
+- **Enter transactions** (editors and admins): the same nine steps as the desktop app, in the same order:
+  Purchase Order → Purchase Invoice → Debit Note → Expenses → Payment, and Sales Order → Sales Invoice →
+  Credit Note → Receipt. Contract and note numbers are automatic (or your own), a known party fills in its broker,
+  company, type, warehouse, GSTIN and branch, picking a contract fills in the product, balance quantity and rate,
+  and every form shows the amounts before you save. Every name box is a dropdown that suggests names from your
+  data as you type, and has **+ Add new** for a party, product, broker, warehouse, branch and so on that isn't
+  there yet (it is marked **new** and offered in every dropdown on the page).
+  Payments and receipts are adjusted against the oldest bills with one click. **Undo last entry** takes the last
+  entry back out.
+  Switch to **Table (like Excel)** at the top of any step to type many rows at once: Tab moves right, Enter moves
+  down, and a block copied from Excel can be pasted in. The table shows what will be saved and any problem per
+  row; all rows are saved together (or none), and **Undo last entry** takes the whole table back out.
+- **Files**: every file of the business in folders, like the file manager on Windows. Click a file to see the
+  Excel sheets inside it (with a preview), every earlier version with who uploaded it, and who renamed, moved,
+  deleted or downloaded it. Upload with the button or by dragging files onto the list (up to 1 GB each);
+  uploading a file with the same name again keeps the old one as an earlier version. Deleted files go to
+  **Recently deleted**, from where they can be brought back. The **Master Sheet (live)** at the top is the
+  workbook the reports come from, with the list of every change anyone made to it. An admin can make any
+  uploaded workbook the Master Sheet (**Use as Master Sheet**, then confirm on Import).
+- **Sheets**: every entry, sheet by sheet (Purchase, Sales, PO, SO, notes), with the Master Sheet's column names,
+  search, filters, sorting and totals.
+- **Audit log** (admin): who did what and when, with the details of each entry.
+- **Import** (admin): uploads a workbook: a full Master Sheet, or just the data sheets (**Purchase**, **Sales**,
+  **PO**, **SO**, and **Debit Notes** / **Credit Notes** if you use them; names like `Purchase Register` are
+  recognised too). You see what was found before anything is saved. Confirming replaces all the data, and the
+  previous import can be **restored**.
+- **Download Master Sheet** (top of every report page, and on the Sheets page): the complete Master Sheet, laid
+  out like the hand-made one (Main Display, Display, Purchase, PO, SO, Sales, Total Debtor Creditor, masters, and
+  Debit / Credit Notes), with the same columns and formulas.
 - **Download all reports (Excel)** gives the formatted report pack.
 
-Useful admin commands (online: Render **Shell**; with Docker: `docker compose exec app ...`):
-```bash
-python -m server.manage add-user <id> --role admin|editor|viewer   # asks for the password
-python -m server.manage reset-password <id>
-python -m server.manage import "Master Sheet.xlsx"                  # import without the web page
+Admin commands (in a Command Prompt in the folder; on Mac / Linux use `.venv/bin/python`):
 ```
+.venv\Scripts\python -m server.manage add-user <id> --role admin      (or editor / viewer; asks for the password)
+.venv\Scripts\python -m server.manage reset-password <id>
+.venv\Scripts\python -m server.manage import "Master Sheet.xlsx"
+```
+
+<details><summary>Other ways to run it (Docker, PostgreSQL)</summary>
+
+`docker compose up -d --build` runs the app with a PostgreSQL database (copy `.env.example` to `.env` first and put
+two long random values in it), on <http://localhost:8000>. Setting `DATABASE_URL` makes the app use any PostgreSQL
+database instead of the `data/business.db` file.
+</details>
 
 ---
 
@@ -304,17 +364,38 @@ server/store.py         Master Sheet data <-> database; rebuilds the loader's ta
 server/imports.py       upload -> preview -> confirm / discard / restore (uploaded files are kept in the database)
 mis_reports/master_sheet.py   builds the Master Sheet workbook (all sheets, formulas and their values) from the data
 server/reports_api.py   runs mis_reports on the database data, caches results, turns them into JSON
-web/                    React + AG Grid pages (npm run dev, npm run build -> web/dist, served by the backend)
+web/                    React + AG Grid pages (npm run dev; npm run build -> web/dist, which is committed so the
+                        office computer needs no Node.js, and served by the backend)
+server/entries.py       entering transactions: runs mis_reports/entries.py on the Master Sheet made from the data,
+                        saves the result as a new version (undo = the version before), keeps the live Master Sheet
+server/office.py        Start_Web_App.bat: runs the app for the office network, prints the addresses, daily backups
+server/sheets.py        the data sheets for the Sheets page
+server/files.py         the Files page: folders, versions, uploads in pieces, kept on disk or in a Hugging Face dataset
+server/hosting.py       knows when it runs on an internet host (Koyeb, Render, Hugging Face) and its web address
 tests/test_server.py    roles, sign-in, import, "database reports equal file reports" and the generated Master Sheet
-render.yaml             Render blueprint (web app + PostgreSQL); Dockerfile and docker-compose.yml for Docker
+tests/test_web_entry.py entering transactions, undo, live updates, office addresses and backups
+tests/test_files.py     the Files page
+Dockerfile, docker-compose.yml   optional: the app with PostgreSQL in Docker
 ```
 
+Run each line on its own (this works the same in Windows PowerShell, Command Prompt and a Mac/Linux terminal):
 ```bash
 pip install -r requirements-server.txt pytest httpx
-uvicorn server.main:create_app --factory --reload           # backend on :8000 (SQLite in ./data by default)
-cd web && npm install && npm run dev                         # pages on :5173, calls the backend
-TEST_DATABASE_URL=postgresql+psycopg://user@host/db python -m pytest tests/test_server.py   # on PostgreSQL
+python -m uvicorn server.main:create_app --factory --reload
 ```
+That is the backend on http://localhost:8000 (SQLite in `./data` by default). For live-reloading pages, open a
+second window in the project folder and run:
+```bash
+cd web
+npm install
+npm run dev
+```
+and open http://localhost:5173 (if PowerShell says *running scripts is disabled on this system*, type `npm.cmd`
+instead of `npm`). After changing anything in `web/`, run `npm run build` (still inside `web`) and
+commit the updated `web/dist` folder, because the office computer uses it as it is.
+
+Tests on PostgreSQL: set `TEST_DATABASE_URL` (for example `postgresql+psycopg://user@host/db`) and run
+`python -m pytest tests/test_server.py tests/test_web_entry.py`.
 
 Streamlit app:
 ```bash

@@ -6,3 +6,4 @@ psycopg[binary]>=3.2
 bcrypt>=4.0
 pyjwt>=2.8
 python-multipart>=0.0.9
+huggingface_hub>=0.30    # only used when files are kept in Hugging Face storage (the free online set-up)

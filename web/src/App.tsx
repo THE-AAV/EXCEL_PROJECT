@@ -7,12 +7,15 @@ import Account from "./pages/Account";
 import Audit from "./pages/Audit";
 import Checks from "./pages/Checks";
 import Dashboard from "./pages/Dashboard";
+import Enter from "./pages/Enter";
+import Files from "./pages/Files";
 import Import from "./pages/Import";
 import Ledger from "./pages/Ledger";
 import Login from "./pages/Login";
 import Notes from "./pages/Notes";
 import Orders from "./pages/Orders";
 import Pnl from "./pages/Pnl";
+import Sheets from "./pages/Sheets";
 import ProductNames from "./pages/ProductNames";
 import Stock from "./pages/Stock";
 import Users from "./pages/Users";
@@ -22,6 +25,9 @@ interface Page { path: string; label: string; element: ReactNode; role: Role; re
 
 const PAGES: Page[] = [
   { path: "/", label: "Dashboard", element: <Dashboard />, role: "viewer", reports: true },
+  { path: "/enter", label: "Enter transactions", element: <Enter />, role: "editor" },
+  { path: "/sheets", label: "Sheets", element: <Sheets />, role: "viewer" },
+  { path: "/files", label: "Files", element: <Files />, role: "viewer" },
   { path: "/pnl", label: "Product P&L", element: <Pnl />, role: "viewer", reports: true },
   { path: "/stock", label: "Stock", element: <Stock />, role: "viewer", reports: true },
   { path: "/creditors", label: "Creditors (we pay)", element: <Ledger side="creditors" />, role: "viewer", reports: true },
@@ -38,7 +44,7 @@ const PAGES: Page[] = [
 
 function Shell() {
   const { user, signOut } = useAuth();
-  const { status, error, reports } = useData();
+  const { status, error, reports, news, clearNews } = useData();
   const loc = useLocation();
   const [menu, setMenu] = useState(false);
   const pages = PAGES.filter((p) => can(user, p.role));
@@ -51,7 +57,8 @@ function Shell() {
         <nav>
           {pages.map((p, i) => (
             <div key={p.path}>
-              {i > 0 && p.role !== pages[i - 1].role && p.path !== "/account" && <div className="nav-sep">Admin</div>}
+              {p.role === "admin" && pages[i - 1]?.role !== "admin" && <div className="nav-sep">Admin</div>}
+              {p.path === "/pnl" && <div className="nav-sep">Reports</div>}
               {p.path === "/account" && <div className="nav-sep" />}
               <NavLink to={p.path} end>{p.label}</NavLink>
             </div>
@@ -70,12 +77,18 @@ function Shell() {
             <h1>{current?.label ?? ""}</h1>
             {status?.source && (
               <div className="muted small">
-                Data from <b>{status.source.filename}</b>, imported {when(status.source.loaded_at)}
+                Last change: <b>{status.source.filename}</b>, {when(status.source.loaded_at)}
                 {reports && <> · {reports.dashboard.purchase_bills} purchase bills · {reports.dashboard.sales_bills} sales bills</>}
               </div>
             )}
           </div>
         </header>
+        {news && (
+          <div className="live-note" role="status">
+            <span className="live-dot" /> Updated just now: {news}
+            <button className="link" onClick={clearNews}>OK</button>
+          </div>
+        )}
         {current?.reports && status?.has_data && <FilterBar />}
         {current?.reports && error && <div className="error">{error}</div>}
         <div className="content">

@@ -5,7 +5,9 @@ The built web app in web/dist is served from the same address, so the browser on
 """
 from __future__ import annotations
 
+import os
 from datetime import date
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,7 +20,7 @@ from mis_reports.excel_export import build_workbook
 from mis_reports.master_sheet import build_master_sheet
 from mis_reports.pipeline import load_aliases as csv_aliases
 
-from . import auth, db, imports, store
+from . import auth, db, entries, files, hosting, imports, sheets, store
 from .config import BASE, Settings
 from .reports_api import ReportCache, report_json, to_json
 
@@ -39,11 +41,13 @@ class PasswordIn(BaseModel):
 class UserIn(BaseModel):
     username: str = Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9._@-]+$")
     full_name: str = ""
+    can_files: bool = False
     role: str
     password: str
 
 
 class UserPatch(BaseModel):
+    can_files: bool | None = None
     full_name: str | None = None
     role: str | None = None
     active: bool | None = None
@@ -73,12 +77,56 @@ def _first_admin_from_settings(engine, settings: Settings) -> None:
         store.audit(conn, {"id": uid, "username": name}, "setup.first_admin")
 
 
+def _stored_secret(engine) -> str:
+    """The sign-in key kept in the database (made once), so a restart does not sign everyone out."""
+    import secrets
+    with engine.begin() as conn:
+        v = conn.execute(select(db.app_settings.c.value).where(db.app_settings.c.key == "secret_key")).scalar()
+        if v is None:
+            v = secrets.token_urlsafe(48)
+            conn.execute(db.app_settings.insert().values(key="secret_key", value=v))
+    return v
+
+
+class FolderIn(BaseModel):
+    name: str
+    parent_id: int | None = None
+
+
+class FolderPatch(BaseModel):
+    name: str | None = None
+    parent_id: int | None = None
+    move: bool = False          # parent_id given (None = the top level)
+
+
+class FilePatch(BaseModel):
+    name: str | None = None
+    folder_id: int | None = None
+    move: bool = False
+
+
+class UploadIn(BaseModel):
+    name: str
+    size: int = Field(ge=0)
+    folder_id: int | None = None
+    file_id: int | None = None   # a new version of this file
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    if hosting.host() and settings.database_url.startswith("sqlite"):
+        # the host's disk is wiped on every restart, so everything typed in would be lost
+        raise SystemExit(f"Running on {hosting.host()} without an online database. Add DATABASE_URL (the address "
+                         f"Neon gives you) in {hosting.settings_place()}, then redeploy.")
     engine = db.make_engine(settings.database_url)
     db.init_db(engine, alias_seed=csv_aliases())
+    if not settings.secret_key:
+        settings.secret_key = _stored_secret(engine)
     _first_admin_from_settings(engine, settings)
+    file_store = files.FileStore(engine, settings.data_dir)
     cache = ReportCache(engine)
+    workbooks = entries.Workbooks(engine)
+    live = entries.LiveFile(settings.data_dir / "Master Sheet (live).xlsx", workbooks)
 
     app = FastAPI(title="Business Reports", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.settings, app.state.engine, app.state.cache = settings, engine, cache
@@ -175,8 +223,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status.HTTP_409_CONFLICT, f"User ID '{name}' is already taken")
             uid = conn.execute(db.users.insert().values(
                 username=name, full_name=body.full_name.strip(), password_hash=auth.hash_password(body.password),
-                role=body.role, active=True, created_at=db.utcnow())).inserted_primary_key[0]
-            store.audit(conn, user, "user.add", target=name, role=body.role)
+                role=body.role, active=True, can_files=body.can_files,
+                created_at=db.utcnow())).inserted_primary_key[0]
+            store.audit(conn, user, "user.add", target=name, role=body.role, can_files=body.can_files)
             return to_json(auth.public_user(conn.execute(select(db.users).where(db.users.c.id == uid)).first()))
 
     @app.patch("/api/users/{user_id}")
@@ -194,6 +243,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 values["role"] = changes["role"] = body.role
             if body.active is not None and body.active != u.active:
                 values["active"] = changes["active"] = body.active
+            if body.can_files is not None and body.can_files != bool(u.can_files):
+                values["can_files"] = changes["can_files"] = body.can_files
             if body.password:
                 auth.validate_password(body.password)
                 values["password_hash"] = auth.hash_password(body.password)
@@ -207,7 +258,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         db.users.c.role == "admin", db.users.c.active.is_(True))).scalar_one()
                     if admins <= 1:
                         raise HTTPException(status.HTTP_409_CONFLICT, "There must always be at least one admin")
-            if "role" in values or "active" in values or "password_hash" in values:
+            if "role" in values or "active" in values or "password_hash" in values or "can_files" in values:
                 values["token_version"] = u.token_version + 1  # sign them out so the change applies now
             if values:
                 conn.execute(update(db.users).where(db.users.c.id == user_id).values(**values))
@@ -227,8 +278,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/imports/{batch_id}/confirm")
     def confirm_import(batch_id: int, user=Depends(admin)):
-        imports.confirm(engine, settings, user, batch_id)
+        with entries.LOCK:   # not while an entry is being saved
+            imports.confirm(engine, settings, user, batch_id)
         cache.clear()
+        live.write()
         with engine.connect() as conn:
             return to_json(imports.batch_row(conn, batch_id))
 
@@ -239,8 +292,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/imports/{batch_id}/restore")
     def restore_import(batch_id: int, user=Depends(admin)):
-        imports.restore(engine, settings, user, batch_id)
+        with entries.LOCK:
+            imports.restore(engine, settings, user, batch_id)
         cache.clear()
+        live.write()
         with engine.connect() as conn:
             return to_json(imports.batch_row(conn, batch_id))
 
@@ -284,6 +339,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(build_workbook(rs), headers={"Content-Disposition": f'attachment; filename="{name}"'},
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    # ------------------------------------------------------------------ entering transactions
+    @app.get("/api/entry/context")
+    def entry_context(_=Depends(editor)):
+        _, _, aliases = cache.data()
+        return to_json(entries.context(workbooks, aliases))
+
+    @app.post("/api/entry/{action}")
+    def save_entry(action: str, body: dict, user=Depends(editor)):
+        result = entries.save_entry(engine, workbooks, user, action, body)
+        live.write(workbooks.get()[1])
+        return to_json(result)
+
+    @app.post("/api/entry-undo")
+    def undo_entry(user=Depends(editor)):
+        result = entries.undo_last(engine, workbooks, user)
+        live.write()
+        return result
+
+    @app.get("/api/entry-recent")
+    def recent_entries(_=Depends(viewer)):
+        with engine.connect() as conn:
+            return to_json(entries.recent(conn))
+
+    @app.get("/api/version")
+    def data_version(_=Depends(viewer)):
+        """Cheap check the pages make every few seconds to pick up changes other people save."""
+        with engine.connect() as conn:
+            b = conn.execute(select(db.import_batches.c.id, db.import_batches.c.created_by, db.import_batches.c.filename)
+                             .where(db.import_batches.c.status == "active")).first()
+            who = conn.execute(select(db.users.c.username).where(db.users.c.id == b.created_by)).scalar() if b else None
+            return {"version": store.data_version(conn), "last_change": b.filename if b else None, "by": who}
+
+    @app.get("/api/sheets")
+    def sheet_rows(_=Depends(viewer)):
+        _, data, _ = cache.data()
+        return to_json(sheets.all_sheets(data))
+
     @app.get("/api/master-sheet")
     def master_sheet(user=Depends(viewer)):
         """The Master Sheet workbook (Purchase, Sales, PO, SO, Total Debtor Creditor, masters, Display),
@@ -315,12 +407,127 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return get_aliases()
 
     # ------------------------------------------------------------------ audit log (admin)
+    @app.get("/api/office")
+    def office_info(request: Request, _=Depends(admin)):
+        """The addresses other people in the office use to open the app, and where the files are kept."""
+        from .office import office_urls
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        online = bool(hosting.host())
+        public = hosting.public_url() or str(request.base_url).rstrip("/")
+        return {"online": online, "public_url": public, "urls": [] if online else office_urls(port),
+                "live_file": str(live.path), "data_dir": str(settings.data_dir),
+                "local": request.client is not None and request.client.host in ("127.0.0.1", "::1")}
+
     @app.get("/api/audit")
     def audit_log(limit: int = Query(200, le=1000), _=Depends(admin)):
         with engine.connect() as conn:
             rows = conn.execute(select(db.audit_log).order_by(db.audit_log.c.id.desc()).limit(limit))
             return to_json([{"id": r.id, "at": r.at, "username": r.username, "action": r.action,
                              "details": r.details} for r in rows])
+
+    # ------------------------------------------------------------------ files
+    @app.get("/api/files")
+    def files_tree(_=Depends(viewer)):
+        return to_json(file_store.tree())
+
+    @app.post("/api/files/folders", status_code=201)
+    def add_folder(body: FolderIn, user=Depends(viewer)):
+        return file_store.add_folder(user, body.name, body.parent_id)
+
+    @app.patch("/api/files/folders/{folder_id}")
+    def edit_folder(folder_id: int, body: FolderPatch, user=Depends(viewer)):
+        file_store.edit_folder(user, folder_id, body.name, body.parent_id if body.move else ...)
+        return {"ok": True}
+
+    @app.delete("/api/files/folders/{folder_id}")
+    def delete_folder(folder_id: int, user=Depends(viewer)):
+        file_store.delete_folder(user, folder_id)
+        return {"ok": True}
+
+    @app.post("/api/files/uploads", status_code=201)
+    def start_upload(body: UploadIn, user=Depends(viewer)):
+        return file_store.start(user, body.name, body.size, body.folder_id, body.file_id)
+
+    @app.put("/api/files/uploads/{upload_id}")
+    async def upload_piece(upload_id: str, request: Request, offset: int = Query(ge=0), user=Depends(viewer)):
+        return await file_store.chunk(user, upload_id, offset, request.stream())
+
+    @app.post("/api/files/uploads/{upload_id}/finish")
+    def finish_upload(upload_id: str, user=Depends(viewer)):
+        result = file_store.finish(user, upload_id)
+        return result
+
+    @app.delete("/api/files/uploads/{upload_id}")
+    def cancel_upload(upload_id: str, user=Depends(viewer)):
+        file_store.cancel(user, upload_id)
+        return {"ok": True}
+
+    @app.get("/api/files/{file_id}/versions")
+    def file_versions(file_id: int, _=Depends(viewer)):
+        return to_json(file_store.versions(file_id))
+
+    @app.get("/api/files/{file_id}/activity")
+    def file_activity(file_id: int, _=Depends(viewer)):
+        return to_json(file_store.activity(file_id))
+
+    @app.patch("/api/files/{file_id}")
+    def edit_file(file_id: int, body: FilePatch, user=Depends(viewer)):
+        file_store.edit_file(user, file_id, body.name, body.folder_id if body.move else ...)
+        return {"ok": True}
+
+    @app.delete("/api/files/{file_id}")
+    def delete_file(file_id: int, user=Depends(viewer)):
+        file_store.delete_file(user, file_id)
+        return {"ok": True}
+
+    @app.post("/api/files/{file_id}/restore")
+    def restore_file(file_id: int, user=Depends(viewer)):
+        file_store.restore_file(user, file_id)
+        return {"ok": True}
+
+    @app.delete("/api/files/{file_id}/forever")
+    def purge_file(file_id: int, user=Depends(admin)):
+        file_store.purge_file(user, file_id)
+        return {"ok": True}
+
+    @app.get("/api/files/versions/{version_id}/download")
+    def download_version(version_id: int, user=Depends(viewer)):
+        v = file_store.version(version_id)
+        path = file_store.blobs.path(v.stored_as)
+        with engine.begin() as conn:
+            store.audit(conn, user, "file.download", file_id=v.file_id, file=v.name, version=v.number)
+        name = v.name if v.number == _latest_number(v.file_id) else f"{Path(v.name).stem} (version {v.number}){Path(v.name).suffix}"
+        return FileResponse(path, filename=name, media_type="application/octet-stream")
+
+    def _latest_number(file_id: int) -> int:
+        with engine.connect() as conn:
+            return conn.execute(select(func.max(db.file_versions.c.number))
+                                .where(db.file_versions.c.file_id == file_id)).scalar() or 0
+
+    @app.get("/api/files/versions/{version_id}/sheet")
+    def sheet_preview(version_id: int, name: str, _=Depends(viewer)):
+        v = file_store.version(version_id)
+        return to_json(files.preview_sheet(file_store.blobs.path(v.stored_as), name))
+
+    @app.post("/api/files/versions/{version_id}/use-as-master", status_code=201)
+    def use_as_master(version_id: int, user=Depends(admin)):
+        """Starts an import of this file (preview first, nothing changes until it is confirmed on Import)."""
+        v = file_store.version(version_id)
+        content = file_store.blobs.path(v.stored_as).read_bytes()
+        return to_json(imports.create_preview(engine, settings, user, v.name, content))
+
+    @app.get("/api/master-sheet/versions")
+    def master_versions(_=Depends(viewer)):
+        """The Master Sheet's history: every import and every entry, with who made it."""
+        with engine.connect() as conn:
+            names = {r.id: r.username for r in conn.execute(select(db.users.c.id, db.users.c.username))}
+            rows = conn.execute(select(db.import_batches).where(
+                db.import_batches.c.status.in_(("active", "replaced", "undone")))
+                .order_by(db.import_batches.c.id.desc()).limit(300))
+            kept = {r.batch_id for r in conn.execute(select(db.import_files.c.batch_id))}
+            return to_json([{"id": b.id, "what": b.filename if b.kind == "entry" else f"Imported {b.filename}",
+                             "kind": b.kind, "status": b.status, "by": names.get(b.created_by),
+                             "at": b.confirmed_at or b.created_at, "kept": b.id in kept} for b in rows])
 
     # ------------------------------------------------------------------ the web app
     if WEB_DIST.exists():

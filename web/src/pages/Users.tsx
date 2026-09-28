@@ -6,7 +6,7 @@ import { useAuth } from "../session";
 const ROLE_HELP: Record<Role, string> = {
   admin: "Everything: users, imports, product names, audit log",
   editor: "Enters transactions and sees all reports",
-  viewer: "Read-only: reports, dashboard and downloads",
+  viewer: "Read-only: reports, dashboard, files and downloads",
 };
 
 export default function Users() {
@@ -14,7 +14,12 @@ export default function Users() {
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [form, setForm] = useState({ username: "", full_name: "", role: "viewer" as Role, password: "" });
+  const blank = { username: "", full_name: "", role: "viewer" as Role, password: "", can_files: false };
+  const [form, setForm] = useState(blank);
+
+  const [office, setOffice] = useState<{ urls: string[]; live_file: string; data_dir: string; online: boolean;
+    public_url: string } | null>(null);
+  useEffect(() => { api<typeof office>("/office").then(setOffice).catch(() => undefined); }, []);
 
   const refresh = () => api<User[]>("/users").then(setUsers).catch((e) => setError(e.message));
   useEffect(() => {
@@ -37,7 +42,7 @@ export default function Users() {
     e.preventDefault();
     act(async () => {
       await api("/users", { method: "POST", json: form });
-      setForm({ username: "", full_name: "", role: "viewer", password: "" });
+      setForm(blank);
     }, `Added ${form.username}. Give them their user ID and password.`);
   };
 
@@ -45,6 +50,23 @@ export default function Users() {
 
   return (
     <>
+      {office && (office.online ? (
+        <div className="card">
+          <h3>Share the app</h3>
+          <p className="hint">Add each person below, then give them their user ID, password and this address. It works
+            from any computer or phone with internet:</p>
+          <ul className="urls"><li><code>{office.public_url}</code></li></ul>
+        </div>
+      ) : (
+        <div className="card">
+          <h3>Share the app with your office</h3>
+          <p className="hint">Add each person below, then give them their user ID, password and this address to open
+            in their browser (on the same office network or Wi-Fi):</p>
+          <ul className="urls">{office.urls.map((u) => <li key={u}><code>{u}</code></li>)}</ul>
+          <p className="hint">The Master Sheet with every entry is kept up to date on the computer running the app:
+            <br /><code>{office.live_file}</code><br />The data is in <code>{office.data_dir}</code>; when the app is started with Start_Web_App.bat a copy is saved every day in its <code>backups</code> folder.</p>
+        </div>
+      ))}
       <h2>Users and roles</h2>
       <div className="role-help">
         {(Object.keys(ROLE_HELP) as Role[]).map((r) => <div key={r}><span className={`badge role-${r}`}>{r}</span> {ROLE_HELP[r]}</div>)}
@@ -52,7 +74,7 @@ export default function Users() {
       {error && <div className="error">{error}</div>}
       {msg && <div className="notice good">{msg}</div>}
       <table className="plain wide">
-        <thead><tr><th>User ID</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
+        <thead><tr><th>User ID</th><th>Name</th><th>Role</th><th title="Upload, rename, move and delete in Files (admins always can)">Files</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id} className={u.active ? "" : "inactive"}>
@@ -62,6 +84,13 @@ export default function Users() {
                 <select value={u.role} onChange={(e) => patch(u, { role: e.target.value }, `${u.username} is now ${e.target.value}`)}>
                   <option value="admin">admin</option><option value="editor">editor</option><option value="viewer">viewer</option>
                 </select>
+              </td>
+              <td>
+                <label className="check" title="Upload, rename, move and delete in Files">
+                  <input type="checkbox" checked={u.role === "admin" || !!u.can_files} disabled={u.role === "admin"}
+                    onChange={(e) => patch(u, { can_files: e.target.checked },
+                      e.target.checked ? `${u.username} can now upload and delete files` : `${u.username} can now only look at files`)} />
+                  {" "}can change</label>
               </td>
               <td>{u.active ? (u.locked ? "Locked (wrong passwords)" : "Active") : "Switched off"}</td>
               <td>{when(u.last_login)}</td>
@@ -95,6 +124,9 @@ export default function Users() {
         <div><label className="field-label">First password</label>
           <input type="text" autoComplete="off" value={form.password} minLength={8} required
             onChange={(e) => setForm({ ...form, password: e.target.value })} /></div>
+        <div><label className="check"><input type="checkbox" checked={form.can_files || form.role === "admin"}
+          disabled={form.role === "admin"} onChange={(e) => setForm({ ...form, can_files: e.target.checked })} />
+          {" "}Can upload and delete files</label></div>
         <div className="actions"><button className="primary">Add user</button></div>
       </form>
     </>
