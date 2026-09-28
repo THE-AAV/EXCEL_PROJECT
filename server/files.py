@@ -11,6 +11,7 @@ upload of up to MAX_FILE_MB works through any proxy and shows its progress.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -25,6 +26,7 @@ from sqlalchemy import func, select, update
 
 from . import db, store
 
+log = logging.getLogger(__name__)
 MAX_FILE_MB = int(os.environ.get("MAX_FILE_MB", "1024"))
 CHUNK_MB = 8
 PREVIEW_ROWS = 200
@@ -34,7 +36,7 @@ EXCEL = (".xlsx", ".xlsm", ".xltx", ".xltm")
 # ------------------------------------------------------------------------------------------ where contents live
 class LocalBlobs:
     """Files in <data folder>/files."""
-    where = "this computer"
+    where = "on the computer running the app"
 
     def __init__(self, root: Path):
         self.root = root
@@ -55,7 +57,7 @@ class LocalBlobs:
 
 class HFBlobs:
     """Files in a private Hugging Face dataset (free, survives restarts), with a local copy as a cache."""
-    where = "Hugging Face storage"
+    where = "in your private Hugging Face storage"
 
     def __init__(self, repo: str, token: str, cache: Path):
         from huggingface_hub import HfApi
@@ -86,10 +88,32 @@ class HFBlobs:
             pass
 
 
+class UnusableBlobs(LocalBlobs):
+    """On a Hugging Face Space without working file storage: the Space's own disk is wiped on every restart,
+    so uploads are refused (with the reason) rather than lost later."""
+
+    def __init__(self, root: Path, problem: str):
+        super().__init__(root)
+        self.problem = problem
+        self.where = f"nowhere yet: {problem}"
+
+    def put(self, key: str, src: Path) -> None:
+        src.unlink(missing_ok=True)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"Files can't be kept yet: {self.problem}")
+
+
 def make_blobs(data_dir: Path):
-    repo, token = os.environ.get("HF_FILES_REPO", ""), os.environ.get("HF_TOKEN", "")
+    repo, token = os.environ.get("HF_FILES_REPO", "").strip(), os.environ.get("HF_TOKEN", "").strip()
     if repo and token:
-        return HFBlobs(repo, token, data_dir / "files-cache")
+        try:
+            return HFBlobs(repo, token, data_dir / "files-cache")
+        except Exception as e:
+            log.error("Hugging Face file storage not usable: %s", e)
+            return UnusableBlobs(data_dir / "files", "the Space's HF_TOKEN or HF_FILES_REPO setting is not right "
+                                 f"({str(e).splitlines()[0][:150]})")
+    if os.environ.get("SPACE_ID"):
+        return UnusableBlobs(data_dir / "files", "add HF_TOKEN and HF_FILES_REPO in the Space's settings "
+                             "(see the README, step 2.5)")
     return LocalBlobs(data_dir / "files")
 
 

@@ -136,7 +136,7 @@ export default function Files() {
   return (
     <>
       <p className="hint">All the files of the business in one place, like the file manager on Windows: folders, the
-        Excel sheets inside each file, and every earlier version with who uploaded it. Files are kept in {tree.where}.
+        Excel sheets inside each file, and every earlier version with who uploaded it. Files are kept {tree.where}.
         {!mayChange && " You can open and download files; an admin can allow you to upload and delete them."}</p>
       {msg && <div className={msg.good ? "notice good" : "error"}>{msg.text}</div>}
       <div className="files">

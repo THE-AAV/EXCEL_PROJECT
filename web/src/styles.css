@@ -249,6 +249,7 @@ table.flist td.empty { text-align: center; padding: 28px; cursor: default; white
 .upload progress { width: 160px; }
 .upload.failed .small { color: var(--bad); }
 .fpanel { margin-top: 12px; }
+.fpanel .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .fpanel h3 { display: flex; align-items: center; gap: 6px; }
 .sheet-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 .sheet-tabs button { background: #fff; border: 1px solid var(--line); color: var(--ink); padding: 5px 10px; }

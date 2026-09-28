@@ -53,7 +53,7 @@ def test_folders_uploads_versions_and_sheets(client, settings):
     f = next(x for x in t["files"] if x["name"] == "Ledger.xlsx")
     assert f["folder_id"] == sub and f["size"] == len(content) and f["changed_by"] == "owner"
     assert f["sheets"] == [{"name": "Purchase", "rows": 4, "cols": 2}, {"name": "Sales", "rows": 4, "cols": 2}]
-    assert t["where"] == "this computer" and t["master"] is None
+    assert t["where"] == "on the computer running the app" and t["master"] is None
 
     # the same name in the same folder is a new version, the old one is kept
     r2 = upload(client, "ledger.xlsx", workbook("Only"), sub)
@@ -155,7 +155,7 @@ def test_hugging_face_storage_is_used_when_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_FILES_REPO", "me/business-files")
     monkeypatch.setenv("HF_TOKEN", "hf_x")
     blobs = F.make_blobs(tmp_path)
-    assert isinstance(blobs, F.HFBlobs) and blobs.where == "Hugging Face storage"
+    assert isinstance(blobs, F.HFBlobs) and blobs.where == "in your private Hugging Face storage"
     src = tmp_path / "up"
     src.write_bytes(b"data")
     blobs.put("k1.xlsx", src)
@@ -163,3 +163,29 @@ def test_hugging_face_storage_is_used_when_configured(tmp_path, monkeypatch):
     blobs.delete("k1.xlsx")
     assert calls == [("token", "hf_x"), ("repo", "me/business-files", True), ("upload", "files/k1.xlsx", b"data"),
                      ("delete", "files/k1.xlsx")]
+
+
+def test_a_space_without_file_storage_refuses_uploads_instead_of_losing_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("HF_FILES_REPO", raising=False)
+    monkeypatch.setenv("SPACE_ID", "me/business-reports")
+    blobs = F.make_blobs(tmp_path)
+    assert "HF_TOKEN and HF_FILES_REPO" in blobs.where
+    src = tmp_path / "up"
+    src.write_bytes(b"x")
+    with pytest.raises(F.HTTPException) as e:
+        blobs.put("k", src)
+    assert e.value.status_code == 503 and not src.exists()
+
+    import huggingface_hub
+
+    class BadApi:
+        def __init__(self, token):
+            pass
+
+        def create_repo(self, *a, **k):
+            raise RuntimeError("401 Unauthorized: invalid token")
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", BadApi)
+    monkeypatch.setenv("HF_FILES_REPO", "me/business-files")
+    monkeypatch.setenv("HF_TOKEN", "hf_wrong")
+    assert "401 Unauthorized" in F.make_blobs(tmp_path).where
