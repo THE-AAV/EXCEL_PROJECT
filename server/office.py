@@ -3,7 +3,8 @@
     python -m server.office            (Start_Web_App.bat does this for you)
 
 It listens on every network card, so other computers and phones on the same Wi-Fi / network open the address it
-prints. The data is kept in data/business.db on this computer, copied to data/backups once a day, and the current
+prints. It also starts a free internet link (server/tunnel.py), so people outside the office can use the app too;
+set INTERNET_LINK=0 to keep it to the office network. The data is kept in data/business.db on this computer, copied to data/backups once a day, and the current
 Master Sheet is kept up to date in "data/Master Sheet (live).xlsx".
 """
 from __future__ import annotations
@@ -59,10 +60,9 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("PORT", "8000"))
+    os.environ["PORT"] = str(port)
     from .config import Settings
-    settings = Settings()
-    if settings.database_url.startswith("sqlite:///"):
-        daily_backup(Path(settings.database_url[len("sqlite:///"):]))
+    settings = Settings()   # the app itself makes the daily backup (see main.create_app)
 
     line = "=" * 64
     print(f"\n{line}\n  Business Reports is running on this computer.\n")
@@ -70,6 +70,15 @@ def main() -> None:
     print("  Others in the office open one of these in their browser:")
     for url in office_urls(port):
         print(f"      {url}")
+    from . import tunnel
+
+    def announce(url: str) -> None:
+        print(f"\n  From anywhere (internet), people open:   {url}\n  (This link changes each time the app starts; "
+              "the Users page always shows the current one.)\n")
+    if tunnel.start(port, settings.data_dir, announce):
+        print("  The internet link is starting; it appears below and on the Users page.")
+    else:
+        print(f"  No internet link: {tunnel.state['problem']}. The office addresses above still work.")
     print(f"\n  Keep this window open while people use the app. Close it to stop.")
     print(f"  Data and backups: {settings.data_dir}")
     print(f"{line}\n")

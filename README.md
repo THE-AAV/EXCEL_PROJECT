@@ -59,52 +59,41 @@ access away at once.
 
 ### Put it online for free (no card needed)
 
-The app runs on **Koyeb** (a free home for web apps) and keeps the data in **Neon** (a free online database) and
-the uploaded files in a private **Hugging Face** folder (free storage). None of them normally asks for a card.
-Nobody has to install anything: people open a web address and sign in. It takes about 20 minutes, all in the
-browser.
+The app runs on **PythonAnywhere**, a free home for Python web apps that asks only for an email address. Nobody
+has to install anything: people open `https://<your username>.pythonanywhere.com` and sign in. It takes about 15
+minutes, all in the browser.
 
-**1. The database (Neon)**
-1. Go to <https://neon.com> and click **Sign up** (with Google, GitHub or an email address).
-2. Create a project: any name (for example `business`), and the region closest to you.
-3. On the project page click **Connect**, and copy the **connection string** (it starts with `postgresql://`).
-   Keep it somewhere private for step 3.
+**1. The account**
+1. Go to <https://www.pythonanywhere.com/registration/register/beginner/> and create the free **Beginner**
+   account. Your username becomes the web address, so pick one the office will recognise.
+2. Confirm your email address.
+3. Open **Account** (top right) → **API token** → **Create a new API token**.
 
-**2. File storage (Hugging Face)**
-1. Go to <https://huggingface.co/join> and make an account (confirm your email address).
-2. Click your picture (top right) → **Settings** → **Access Tokens** → **Create new token**. Choose **Write**,
-   name it `business-app`, click **Create**, and copy the token (it starts with `hf_`).
+**2. The app**
+1. Open **Consoles** → **Bash**. A black window opens.
+2. Paste this line and press Enter:
 
-You don't create anything else there: the app makes a private folder called `business-files` by itself.
+   ```
+   bash <(curl -sL https://raw.githubusercontent.com/THE-AAV/EXCEL_PROJECT/claude/excel-debtor-creditor-pl-reports-o0o0zm/deploy/pythonanywhere/setup.sh)
+   ```
 
-**3. The app (Koyeb)**
-1. Go to <https://app.koyeb.com/auth/signup> and sign up (with GitHub or an email address).
-2. Click this button (it fills in everything it can):
-
-   [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=business-reports&type=git&repository=github.com/THE-AAV/EXCEL_PROJECT&branch=claude%2Fexcel-debtor-creditor-pl-reports-o0o0zm&builder=dockerfile&instance_type=free&regions=was&ports=8000%3Bhttp%3B%2F&env%5BDATABASE_URL%5D=&env%5BHF_TOKEN%5D=&env%5BHF_FILES_REPO%5D=business-files&env%5BADMIN_PASSWORD%5D=)
-
-3. Under **Environment variables**, fill in the empty ones:
-
-   | Name | Value |
-   |---|---|
-   | `DATABASE_URL` | the Neon connection string from step 1.3 |
-   | `HF_TOKEN` | the token from step 2.2 |
-   | `ADMIN_PASSWORD` | the password you will sign in with (at least 8 characters) |
-
-   Leave `HF_FILES_REPO` as `business-files`. Check that the instance says **Free**, then click **Deploy**.
-4. Koyeb builds the app (about 5 minutes) and then shows **Healthy**. Your app's address is shown at the top,
-   ending in `.koyeb.app`. Open it and sign in as **admin** with the password from step 3.
-5. **Import** your workbook, add people on **Users** (the page also shows the address to share), and give them
-   the address and their password.
+3. It sets everything up (the first time takes a few minutes). When it asks, type the admin password twice
+   (nothing shows while you type).
+4. When it says **Done**, open `https://<your username>.pythonanywhere.com` and sign in as **admin**.
+5. **Import** your workbook, add people on **Users**, and give them the address and their password.
 
 **Good to know**
-- Everything is kept outside Koyeb, so restarts lose nothing: the data in Neon, the uploaded files in your
-  private Hugging Face folder (free space: 100 GB; one file can be up to 1 GB in the app).
-- If nobody opens the app for an hour it goes to sleep. The next visit wakes it up, which takes about a minute.
-- **Getting a newer version:** in Koyeb open the service and click **Redeploy**.
-- If Koyeb ever asks for a card (it does this only when it can't tell you are a real person), stop there and use
-  [Run it for the whole office](#run-it-for-the-whole-office-free) instead.
-- Advanced: the app also runs on any other host that builds the `Dockerfile`. Give it the same three settings.
+- Your data, files and daily backups are kept in the `business-data` folder of your PythonAnywhere account.
+  Updates never touch it.
+- **Getting a newer version:** open a Bash console and paste the same line again.
+- **Once a month**, sign in to PythonAnywhere and, if the **Web** page shows a button to keep the site running
+  (**Run until 1 month from today**), click it. Free sites that nobody extends are switched off after a month;
+  pasting the line above also starts it again.
+- The free plan has 512 MB of space in all. The app leaves about 250 MB for your files, and one file can be up
+  to 100 MB. The Files page shows how much is used. Delete old files for good in **Recently deleted** to make
+  room. For bigger files, use [Run it for the whole office](#run-it-for-the-whole-office-free) instead.
+- PythonAnywhere's support for apps like this one is still marked beta. If the site ever stops working, the
+  same app also runs on an office PC (below).
 
 ### Run it for the whole office (free)
 
@@ -123,6 +112,9 @@ for and no account to create anywhere.
 5. The browser opens the app. The first time, create the **admin** account (your own user ID and password).
 6. The black window shows the address for everyone else, like `http://192.168.1.20:8000`. Keep that window open;
    closing it stops the app. The same address is shown in the app under **Users**.
+7. It also shows a free internet link (`https://....trycloudflare.com`) for people outside the office, and so
+   does the **Users** page. It changes each time the app starts, so share the new one after a restart. To keep
+   the app to the office network only, run `set INTERNET_LINK=0` in a Command Prompt before starting it.
 
 **Getting started in the app**
 

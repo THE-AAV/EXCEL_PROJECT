@@ -192,3 +192,21 @@ def test_an_online_host_without_file_storage_refuses_uploads_instead_of_losing_t
     monkeypatch.setenv("HF_FILES_REPO", "me/business-files")
     monkeypatch.setenv("HF_TOKEN", "hf_wrong")
     assert "401 Unauthorized" in F.make_blobs(tmp_path).where
+
+
+def test_a_small_disk_allowance_is_kept_to(client, monkeypatch):
+    monkeypatch.setattr(F, "STORAGE_MB", 1)
+    setup_admin(client)
+    assert tree(client)["space"]["limit_mb"] == 1
+    r = client.post("/api/files/uploads", json={"name": "big.xlsx", "size": 2_000_000})
+    assert r.status_code == 507 and "1 MB" in r.json()["detail"]
+    assert client.post("/api/files/uploads", json={"name": "small.xlsx", "size": 20_000}).status_code == 201
+
+
+def test_pythonanywhere_keeps_its_disk_so_the_app_runs_there_as_on_an_office_pc(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_URL", "https://shubham.pythonanywhere.com/")
+    from server import hosting
+    assert hosting.host() == "online" and not hosting.wipes_disk()
+    assert hosting.public_url() == "https://shubham.pythonanywhere.com"
+    blobs = F.make_blobs(tmp_path)
+    assert isinstance(blobs, F.LocalBlobs) and blobs.where == "in the app's own online storage"

@@ -28,6 +28,8 @@ from . import db, hosting, store
 
 log = logging.getLogger(__name__)
 MAX_FILE_MB = int(os.environ.get("MAX_FILE_MB", "1024"))
+# the most the data folder may use, for hosts with a small disk allowance (PythonAnywhere's free plan); 0 = no limit
+STORAGE_MB = int(os.environ.get("STORAGE_MB", "0"))
 CHUNK_MB = 8
 PREVIEW_ROWS = 200
 EXCEL = (".xlsx", ".xlsm", ".xltx", ".xltm")
@@ -113,10 +115,13 @@ def make_blobs(data_dir: Path):
             log.error("Hugging Face file storage not usable: %s", e)
             return UnusableBlobs(data_dir / "files", "the HF_TOKEN or HF_FILES_REPO setting is not right "
                                  f"({str(e).splitlines()[0][:150]})")
-    if hosting.host():
+    if hosting.wipes_disk():
         return UnusableBlobs(data_dir / "files", f"add HF_TOKEN and HF_FILES_REPO in {hosting.settings_place()} "
                              "(see the README, \"Put it online for free\")")
-    return LocalBlobs(data_dir / "files")
+    local = LocalBlobs(data_dir / "files")
+    if hosting.host():   # PythonAnywhere: the app's own disk, which is kept
+        local.where = "in the app's own online storage"
+    return local
 
 
 # ------------------------------------------------------------------------------------------ helpers
@@ -235,11 +240,15 @@ def preview_sheet(path: Path, sheet: str, limit: int = PREVIEW_ROWS) -> dict:
 class FileStore:
     def __init__(self, engine, data_dir: Path, blobs=None):
         self.engine = engine
+        self.data_dir = data_dir
         self.blobs = blobs or make_blobs(data_dir)
         self.partial = data_dir / "partial-uploads"
         self.partial.mkdir(parents=True, exist_ok=True)
         self.uploads: dict[str, dict] = {}
         self.lock = threading.Lock()
+
+    def space_used(self) -> int:
+        return sum(p.stat().st_size for p in self.data_dir.rglob("*") if p.is_file())
 
     # ---- listing
     def tree(self) -> dict:
@@ -266,7 +275,8 @@ class FileStore:
             master = conn.execute(select(db.import_batches).where(db.import_batches.c.status == "active")).first()
             count = conn.execute(select(func.count()).select_from(db.import_batches)
                                  .where(db.import_batches.c.status.in_(("active", "replaced", "undone")))).scalar_one()
-        return {"folders": folders, "files": files, "where": self.blobs.where,
+        space = {"used_mb": round(self.space_used() / 2**20, 1), "limit_mb": STORAGE_MB} if STORAGE_MB else None
+        return {"folders": folders, "files": files, "where": self.blobs.where, "space": space,
                 "master": None if master is None else {
                     "changed_at": master.confirmed_at or master.created_at, "changed_by": names.get(master.created_by),
                     "last_change": master.filename, "versions": count}}
@@ -303,6 +313,13 @@ class FileStore:
         if size > MAX_FILE_MB * 1024 * 1024:
             raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Files can be up to {MAX_FILE_MB:,} MB")
         free = shutil.disk_usage(self.partial).free
+        if STORAGE_MB:
+            left = STORAGE_MB * 1024 * 1024 - self.space_used()
+            if size > left:
+                raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE,
+                                    f"There is not enough space left for this file ({max(left, 0) // 2**20:,} MB free "
+                                    f"of {STORAGE_MB:,} MB). Delete old files for good in Recently deleted, or "
+                                    "keep big files elsewhere.")
         if size * 2 > free:
             raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, "There is not enough free space for this file")
         with self.engine.connect() as conn:

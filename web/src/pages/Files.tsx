@@ -12,7 +12,7 @@ interface FileRow {
   changed_at: string; changed_by: string | null; created_by: string | null;
 }
 interface Tree {
-  folders: Folder[]; files: FileRow[]; where: string;
+  folders: Folder[]; files: FileRow[]; where: string; space: { used_mb: number; limit_mb: number } | null;
   master: { changed_at: string; changed_by: string | null; last_change: string; versions: number } | null;
 }
 interface Version { id: number; number: number; size: number; sheets: Sheet[]; note: string; by: string | null; at: string }
@@ -137,6 +137,7 @@ export default function Files() {
     <>
       <p className="hint">All the files of the business in one place, like the file manager on Windows: folders, the
         Excel sheets inside each file, and every earlier version with who uploaded it. Files are kept {tree.where}.
+        {tree.space && ` Space used: ${tree.space.used_mb.toLocaleString()} MB of ${tree.space.limit_mb.toLocaleString()} MB.`}
         {!mayChange && " You can open and download files; an admin can allow you to upload and delete them."}</p>
       {msg && <div className={msg.good ? "notice good" : "error"}>{msg.text}</div>}
       <div className="files">
