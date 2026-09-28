@@ -114,7 +114,7 @@ class UploadIn(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    if hosting.host() and settings.database_url.startswith("sqlite"):
+    if hosting.wipes_disk() and settings.database_url.startswith("sqlite"):
         # the host's disk is wiped on every restart, so everything typed in would be lost
         raise SystemExit(f"Running on {hosting.host()} without an online database. Add DATABASE_URL (the address "
                          f"Neon gives you) in {hosting.settings_place()}, then redeploy.")
@@ -129,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     live = entries.LiveFile(settings.data_dir / "Master Sheet (live).xlsx", workbooks)
 
     app = FastAPI(title="Business Reports", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    backed_up = {"day": None}
     app.state.settings, app.state.engine, app.state.cache = settings, engine, cache
 
     @app.middleware("http")
@@ -138,6 +139,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and request.headers.get("x-requested-with") != "fetch":
             return JSONResponse({"detail": "Missing request header"}, status.HTTP_403_FORBIDDEN)
         response = await call_next(request)
+        if settings.database_url.startswith("sqlite:///") and backed_up["day"] != date.today():
+            # a copy of the database once a day (also when the app runs for weeks without a restart)
+            from .office import daily_backup
+            backed_up["day"] = date.today()
+            daily_backup(Path(settings.database_url[len("sqlite:///"):]))
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
@@ -411,10 +417,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def office_info(request: Request, _=Depends(admin)):
         """The addresses other people in the office use to open the app, and where the files are kept."""
         from .office import office_urls
-        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        from .tunnel import state as link
+        # the port the app itself listens on, also when this page came through the internet link
+        port = int(os.environ.get("PORT") or request.url.port or (443 if request.url.scheme == "https" else 80))
         online = bool(hosting.host())
         public = hosting.public_url() or str(request.base_url).rstrip("/")
         return {"online": online, "public_url": public, "urls": [] if online else office_urls(port),
+                "internet_url": link["url"], "internet_problem": link["problem"],
                 "live_file": str(live.path), "data_dir": str(settings.data_dir),
                 "local": request.client is not None and request.client.host in ("127.0.0.1", "::1")}
 

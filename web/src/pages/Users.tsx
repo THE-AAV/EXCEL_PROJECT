@@ -18,8 +18,14 @@ export default function Users() {
   const [form, setForm] = useState(blank);
 
   const [office, setOffice] = useState<{ urls: string[]; live_file: string; data_dir: string; online: boolean;
-    public_url: string } | null>(null);
-  useEffect(() => { api<typeof office>("/office").then(setOffice).catch(() => undefined); }, []);
+    public_url: string; internet_url: string; internet_problem: string } | null>(null);
+  useEffect(() => {
+    // the internet link takes a few seconds to appear after the app starts, and changes if it has to reconnect
+    const load = () => api<typeof office>("/office").then(setOffice).catch(() => undefined);
+    load();
+    const t = window.setInterval(load, 10_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const refresh = () => api<User[]>("/users").then(setUsers).catch((e) => setError(e.message));
   useEffect(() => {
@@ -63,6 +69,13 @@ export default function Users() {
           <p className="hint">Add each person below, then give them their user ID, password and this address to open
             in their browser (on the same office network or Wi-Fi):</p>
           <ul className="urls">{office.urls.map((u) => <li key={u}><code>{u}</code></li>)}</ul>
+          <p className="hint">From anywhere else (home, phone data, another city) they open this internet link:</p>
+          {office.internet_url
+            ? <ul className="urls"><li><code>{office.internet_url}</code></li></ul>
+            : <p className="hint">{office.internet_problem ? `No internet link right now: ${office.internet_problem}.`
+                : "The internet link appears here a few seconds after the app starts (with Start Business Reports)."}</p>}
+          {office.internet_url && <p className="hint">This link changes each time the app is started, so share the new
+            one after a restart. The app only works while this computer is on and the app window is open.</p>}
           <p className="hint">The Master Sheet with every entry is kept up to date on the computer running the app:
             <br /><code>{office.live_file}</code><br />The data is in <code>{office.data_dir}</code>; when the app is started with Start_Web_App.bat a copy is saved every day in its <code>backups</code> folder.</p>
         </div>

@@ -1,5 +1,8 @@
-"""Whether the app runs on an internet host (Koyeb, Render, a Hugging Face Space) and its public address.
-Those hosts wipe their disk on every restart, so the app keeps everything in the online database and file store."""
+"""Whether the app runs on an internet host and its public address.
+
+PythonAnywhere keeps its disk, so the app keeps its data there as on an office PC (PUBLIC_URL tells it the address).
+Koyeb, Render and Hugging Face Spaces wipe their disk on every restart, so there the app keeps everything in an
+online database and file store instead."""
 from __future__ import annotations
 
 import os
@@ -18,6 +21,10 @@ def host() -> str:
         if os.environ.get(marker):
             return name
     return "online" if os.environ.get("PUBLIC_URL") else ""
+
+
+def wipes_disk() -> bool:
+    return host() in {name for name, _, _ in HOSTS}
 
 
 def public_url() -> str:

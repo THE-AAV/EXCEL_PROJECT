@@ -201,3 +201,33 @@ def test_a_table_of_rows_is_saved_together_and_undone_together(client, rich_mast
     assert client.post("/api/entry-undo").json()["message"] == "Undone: 3 purchase orders saved for Grid Mill"
     assert len(client.get("/api/reports", params=P).json()["po"]) == len(before["po"])
     assert client.post("/api/entry/batch", json={"items": []}).status_code == 422
+
+
+def test_the_internet_link_is_read_from_cloudflared_and_shown_to_the_admin(client, tmp_path, monkeypatch):
+    from server import tunnel
+    fake = tmp_path / "cloudflared"
+    fake.write_text("#!/bin/sh\necho 'INF |  https://blue-cat-42.trycloudflare.com  |' >&2\nsleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(tunnel, "find_cloudflared", lambda data_dir: fake)
+    monkeypatch.setitem(tunnel.state, "url", "")
+    seen = []
+    assert tunnel.start(8000, tmp_path, seen.append)
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.1)
+    assert seen == ["https://blue-cat-42.trycloudflare.com"]
+    setup_admin(client)
+    assert client.get("/api/office").json()["internet_url"] == "https://blue-cat-42.trycloudflare.com"
+    monkeypatch.setitem(tunnel.state, "url", "")
+    monkeypatch.setenv("INTERNET_LINK", "0")
+    assert not tunnel.start(8000, tmp_path) and "switched off" in tunnel.state["problem"]
+
+
+def test_the_app_backs_up_its_database_once_a_day_by_itself(client, settings):
+    client.get("/api/health")
+    db_file = settings.database_url[len("sqlite:///"):] if settings.database_url.startswith("sqlite") else None
+    if db_file:
+        from pathlib import Path
+        backups = list((Path(db_file).parent / "backups").glob("*.db"))
+        assert len(backups) == 1 and backups[0].name.endswith(f"{date.today():%Y-%m-%d}.db")
