@@ -38,6 +38,7 @@ users = Table(
     Column("token_version", Integer, nullable=False, default=0),  # bumped to sign a user out everywhere
     Column("created_at", DateTime, nullable=False, default=utcnow),
     Column("last_login", DateTime),
+    Column("can_files", Boolean, nullable=False, default=False),   # may upload / delete in Files (admins always)
 )
 
 import_batches = Table(
@@ -72,6 +73,47 @@ audit_log = Table(
     Column("username", String(64), nullable=False, default=""),
     Column("action", String(64), nullable=False),
     Column("details", JSON, nullable=False, default=dict),
+)
+
+app_settings = Table(   # values the app keeps for itself, e.g. the sign-in key on hosts whose disk is wiped
+    "app_settings", metadata,
+    Column("key", String(64), primary_key=True),
+    Column("value", Text, nullable=False),
+)
+
+# ---- the Files section: folders of files, every upload of a file kept as a version
+folders = Table(
+    "folders", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(255), nullable=False),
+    Column("parent_id", Integer, ForeignKey("folders.id")),
+    Column("created_by", Integer, ForeignKey("users.id")),
+    Column("created_at", DateTime, nullable=False, default=utcnow),
+)
+
+files = Table(
+    "files", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(255), nullable=False),
+    Column("folder_id", Integer, ForeignKey("folders.id")),
+    Column("created_by", Integer, ForeignKey("users.id")),
+    Column("created_at", DateTime, nullable=False, default=utcnow),
+    Column("deleted_by", Integer, ForeignKey("users.id")),
+    Column("deleted_at", DateTime),
+)
+
+file_versions = Table(
+    "file_versions", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("file_id", Integer, ForeignKey("files.id"), index=True, nullable=False),
+    Column("number", Integer, nullable=False),
+    Column("size", Integer, nullable=False),
+    Column("sha256", String(64), nullable=False),
+    Column("stored_as", String(255), nullable=False),
+    Column("sheets", JSON, nullable=False, default=list),   # [{name, rows, cols}] for Excel files
+    Column("note", String(255), nullable=False, default=""),
+    Column("uploaded_by", Integer, ForeignKey("users.id")),
+    Column("uploaded_at", DateTime, nullable=False, default=utcnow),
 )
 
 product_aliases = Table(
@@ -151,3 +193,5 @@ def _add_missing_columns(engine: Engine) -> None:
         for table, _ in TXN.values():
             if "extra" not in {c["name"] for c in insp.get_columns(table.name)}:
                 conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN extra JSON"))
+        if "can_files" not in {c["name"] for c in insp.get_columns("users")}:
+            conn.execute(text("ALTER TABLE users ADD COLUMN can_files BOOLEAN NOT NULL DEFAULT FALSE"))

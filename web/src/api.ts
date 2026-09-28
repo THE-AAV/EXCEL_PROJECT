@@ -63,6 +63,7 @@ export interface User {
   role: Role;
   active?: boolean;
   locked?: boolean;
+  can_files?: boolean;
   created_at?: string;
   last_login?: string | null;
 }

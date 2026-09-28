@@ -49,7 +49,7 @@ def make_token(user, settings) -> str:
 
 def public_user(u) -> dict:
     return {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role, "active": u.active,
-            "created_at": u.created_at, "last_login": u.last_login,
+            "created_at": u.created_at, "last_login": u.last_login, "can_files": bool(u.can_files),
             "locked": bool(u.locked_until and u.locked_until > db.utcnow())}
 
 
@@ -96,7 +96,8 @@ def current_user(request: Request):
         u = conn.execute(select(db.users).where(db.users.c.id == int(claims["sub"]))).first()
     if u is None or not u.active or u.token_version != claims.get("ver"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has ended. Please sign in again.")
-    return {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role}
+    return {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role,
+            "can_files": u.role == "admin" or bool(u.can_files)}
 
 
 def require(role: str):

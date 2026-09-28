@@ -9,10 +9,13 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 
 
-def _secret(data_dir: Path) -> str:
-    """SECRET_KEY from the environment, or one generated once and kept in the data folder."""
+def _secret(data_dir: Path, database_url: str) -> str:
+    """SECRET_KEY from the environment, or one generated once and kept in the data folder. With an online
+    database the app keeps it there instead (see main.create_app), because free hosts wipe their disk."""
     if os.environ.get("SECRET_KEY"):
         return os.environ["SECRET_KEY"]
+    if not database_url.startswith("sqlite"):
+        return ""
     path = data_dir / "secret_key"
     if not path.exists():
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +51,7 @@ class Settings:
         self.database_url = self.database_url or os.environ.get("DATABASE_URL") or \
             f"sqlite:///{self.data_dir / 'business.db'}"
         self.database_url = normalize_database_url(self.database_url)
-        self.secret_key = self.secret_key or _secret(self.data_dir)
+        self.secret_key = self.secret_key or _secret(self.data_dir, self.database_url)
 
     @property
     def upload_dir(self) -> Path:

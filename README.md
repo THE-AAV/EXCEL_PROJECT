@@ -33,12 +33,12 @@ This repository has **two apps** that share the same report calculations. Both a
 
 | | **Web app with logins** (new) | **Desktop app** (Streamlit, the original) |
 |---|---|---|
-| Who uses it | Everyone in the office, each with their own ID and password, from any computer or phone on the office network | One person on one computer |
-| Where the data lives | A database file on the office computer that runs the app | The Master Sheet Excel file itself |
+| Who uses it | Everyone, each with their own ID and password, from any computer or phone (online, or on the office network) | One person on one computer |
+| Where the data lives | A free online database (or a database file on the office computer that runs the app) | The Master Sheet Excel file itself |
 | Entering transactions | **Enter transactions** page: all 9 steps, same as the desktop app | **Enter transactions** page |
 | Master Sheet | Kept up to date for you, plus **Download Master Sheet** | Is the working file |
 | Who changed what | **Audit log**: every entry with the person, time and details | Activity log file |
-| How to start | Double-click **`Start_Web_App.bat`** ([details](#run-it-for-the-whole-office-free)) | Double-click **`Start_Reports_App.bat`** ([details](#starting-the-app)) |
+| How to start | Online for everyone ([details](#put-it-online-for-free-no-card-needed)), or double-click **`Start_Web_App.bat`** on an office computer ([details](#run-it-for-the-whole-office-free)) | Double-click **`Start_Reports_App.bat`** ([details](#starting-the-app)) |
 
 ---
 
@@ -49,9 +49,59 @@ seconds, on the dashboard, the reports and the Sheets page, and the admin can se
 
 | Role | Can do |
 |---|---|
-| **admin** | Everything: users, importing workbooks, product names, the audit log |
-| **editor** | Enter transactions (and undo their last entry), see every report, download |
-| **viewer** | Read-only: dashboard, reports, sheets, downloads |
+| **admin** | Everything: users, importing workbooks, files, product names, the audit log |
+| **editor** | Enter transactions (and undo their last entry), see every report and file, download |
+| **viewer** | Read-only: dashboard, reports, sheets, files, downloads |
+
+On the **Users** page the admin also ticks **Files: can change** for each person who may upload, rename, move and
+delete files (admins always can; everyone else can look at and download them). Switching a user off takes their
+access away at once.
+
+### Put it online for free (no card needed)
+
+The app runs on **Hugging Face** (a free home for web apps, which also keeps your files privately) and keeps the
+data in **Neon** (a free online database). Neither asks for a card. Nobody has to install anything: people open a
+web address and sign in. It takes about 20 minutes, all in the browser.
+
+**1. The database (Neon)**
+1. Go to <https://neon.com> and click **Sign up** (with Google, GitHub or an email address).
+2. Create a project: any name (for example `business`), and the region closest to you.
+3. On the project page click **Connect**, and copy the **connection string** (it starts with `postgresql://`).
+   Keep it somewhere private for step 2.5.
+
+**2. The app (Hugging Face)**
+1. Go to <https://huggingface.co/join> and make an account (confirm your email address).
+2. Click your picture (top right) → **Settings** → **Access Tokens** → **Create new token**. Choose **Write**,
+   name it `business-app`, click **Create**, and copy the token (it starts with `hf_`).
+3. Go to <https://huggingface.co/new-space>. Name it (for example `business-reports`), choose **Docker** and then
+   **Blank**, keep **CPU basic · Free**, choose **Public** (the app has its own sign-in; no data is kept in the
+   Space itself), and click **Create Space**.
+4. In the new Space open **Files**:
+   - **+ Add file** → **Create a new file**, name it `Dockerfile`, paste everything from
+     [`deploy/huggingface/Dockerfile`](deploy/huggingface/Dockerfile), and click **Commit**.
+   - Open `README.md` → **edit**, replace everything with [`deploy/huggingface/README.md`](deploy/huggingface/README.md),
+     and click **Commit**.
+5. Open the Space's **Settings** → **Variables and secrets** and add:
+
+   | Type | Name | Value |
+   |---|---|---|
+   | Secret | `DATABASE_URL` | the Neon connection string from step 1.3 |
+   | Secret | `HF_TOKEN` | the token from step 2.2 |
+   | Secret | `ADMIN_PASSWORD` | the password you will sign in with (at least 8 characters) |
+   | Variable | `HF_FILES_REPO` | your Hugging Face name, then `/business-files` (for example `shubham/business-files`) |
+
+6. The Space builds by itself (a few minutes) and then shows **Running**. Your app's address is
+   `https://<your name>-<space name>.hf.space`, for example `https://shubham-business-reports.hf.space`.
+   Open it and sign in as **admin** with the password from step 5.
+7. **Import** your workbook, add people on **Users**, and give them the address and their password.
+
+**Good to know**
+- Everything is kept outside the Space, so restarts lose nothing: the data in Neon, the uploaded files in a
+  private Hugging Face dataset called `business-files` (free space: 100 GB; one file can be up to 1 GB in the
+  app).
+- If nobody opens the app for two days it goes to sleep. The next visit wakes it up, which takes about a minute.
+- **Getting a newer version:** in the Space's **Settings**, click **Factory rebuild**.
+- Use the `.hf.space` address. The Space's page on huggingface.co shows the app in a frame that can't sign in.
 
 ### Run it for the whole office (free)
 
@@ -107,6 +157,13 @@ On a Mac or Linux computer use `./start_web_app.sh` instead of the `.bat` file.
   Switch to **Table (like Excel)** at the top of any step to type many rows at once: Tab moves right, Enter moves
   down, and a block copied from Excel can be pasted in. The table shows what will be saved and any problem per
   row; all rows are saved together (or none), and **Undo last entry** takes the whole table back out.
+- **Files**: every file of the business in folders, like the file manager on Windows. Click a file to see the
+  Excel sheets inside it (with a preview), every earlier version with who uploaded it, and who renamed, moved,
+  deleted or downloaded it. Upload with the button or by dragging files onto the list (up to 1 GB each);
+  uploading a file with the same name again keeps the old one as an earlier version. Deleted files go to
+  **Recently deleted**, from where they can be brought back. The **Master Sheet (live)** at the top is the
+  workbook the reports come from, with the list of every change anyone made to it. An admin can make any
+  uploaded workbook the Master Sheet (**Use as Master Sheet**, then confirm on Import).
 - **Sheets**: every entry, sheet by sheet (Purchase, Sales, PO, SO, notes), with the Master Sheet's column names,
   search, filters, sorting and totals.
 - **Audit log** (admin): who did what and when, with the details of each entry.
@@ -310,8 +367,11 @@ server/entries.py       entering transactions: runs mis_reports/entries.py on th
                         saves the result as a new version (undo = the version before), keeps the live Master Sheet
 server/office.py        Start_Web_App.bat: runs the app for the office network, prints the addresses, daily backups
 server/sheets.py        the data sheets for the Sheets page
+server/files.py         the Files page: folders, versions, uploads in pieces, kept on disk or in a Hugging Face dataset
+deploy/huggingface/     the two files for the free Hugging Face Space (see "Put it online for free")
 tests/test_server.py    roles, sign-in, import, "database reports equal file reports" and the generated Master Sheet
 tests/test_web_entry.py entering transactions, undo, live updates, office addresses and backups
+tests/test_files.py     the Files page
 Dockerfile, docker-compose.yml   optional: the app with PostgreSQL in Docker
 ```
 

@@ -8,6 +8,7 @@ import Audit from "./pages/Audit";
 import Checks from "./pages/Checks";
 import Dashboard from "./pages/Dashboard";
 import Enter from "./pages/Enter";
+import Files from "./pages/Files";
 import Import from "./pages/Import";
 import Ledger from "./pages/Ledger";
 import Login from "./pages/Login";
@@ -26,6 +27,7 @@ const PAGES: Page[] = [
   { path: "/", label: "Dashboard", element: <Dashboard />, role: "viewer", reports: true },
   { path: "/enter", label: "Enter transactions", element: <Enter />, role: "editor" },
   { path: "/sheets", label: "Sheets", element: <Sheets />, role: "viewer" },
+  { path: "/files", label: "Files", element: <Files />, role: "viewer" },
   { path: "/pnl", label: "Product P&L", element: <Pnl />, role: "viewer", reports: true },
   { path: "/stock", label: "Stock", element: <Stock />, role: "viewer", reports: true },
   { path: "/creditors", label: "Creditors (we pay)", element: <Ledger side="creditors" />, role: "viewer", reports: true },
