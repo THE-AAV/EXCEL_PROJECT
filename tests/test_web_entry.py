@@ -3,6 +3,9 @@ import time
 from datetime import date, timedelta
 
 import openpyxl
+import pytest
+
+from server.main import create_app
 
 from server.office import daily_backup, office_urls
 from tests.test_server import (AS_OF, H, add_user, assert_same, client, rich_master, settings, setup_admin,  # noqa: F401
@@ -149,6 +152,19 @@ def test_live_updates_and_office_details(client, rich_master):
     office = client.get("/api/office").json()
     assert office["urls"] and all(u.startswith("http://") for u in office["urls"])
     assert office["live_file"].endswith("Master Sheet (live).xlsx")
+
+
+def test_on_koyeb_the_app_shows_its_web_address_and_needs_an_online_database(client, settings, monkeypatch):
+    setup_admin(client)
+    assert client.get("/api/office").json()["online"] is False
+    monkeypatch.setenv("KOYEB_APP_NAME", "business-reports")
+    monkeypatch.setenv("KOYEB_PUBLIC_DOMAIN", "business-reports-shubham.koyeb.app")
+    office = client.get("/api/office").json()
+    assert office["online"] and office["urls"] == []
+    assert office["public_url"] == "https://business-reports-shubham.koyeb.app"
+    if settings.database_url.startswith("sqlite"):   # its disk is wiped on restarts, so a file database is refused
+        with pytest.raises(SystemExit, match="DATABASE_URL"):
+            create_app(settings)
 
 
 def test_daily_backups_keep_the_last_30(tmp_path):

@@ -24,7 +24,7 @@ from pathlib import Path
 from fastapi import HTTPException, status
 from sqlalchemy import func, select, update
 
-from . import db, store
+from . import db, hosting, store
 
 log = logging.getLogger(__name__)
 MAX_FILE_MB = int(os.environ.get("MAX_FILE_MB", "1024"))
@@ -63,6 +63,8 @@ class HFBlobs:
         from huggingface_hub import HfApi
         self.repo, self.token, self.cache = repo, token, cache
         self.api = HfApi(token=token)
+        if "/" not in repo:   # just a name: keep it under the token's own account
+            self.repo = repo = f"{self.api.whoami()['name']}/{repo}"
         cache.mkdir(parents=True, exist_ok=True)
         self.api.create_repo(repo, repo_type="dataset", private=True, exist_ok=True)
 
@@ -89,7 +91,7 @@ class HFBlobs:
 
 
 class UnusableBlobs(LocalBlobs):
-    """On a Hugging Face Space without working file storage: the Space's own disk is wiped on every restart,
+    """On an internet host without working file storage: the host's own disk is wiped on every restart,
     so uploads are refused (with the reason) rather than lost later."""
 
     def __init__(self, root: Path, problem: str):
@@ -109,11 +111,11 @@ def make_blobs(data_dir: Path):
             return HFBlobs(repo, token, data_dir / "files-cache")
         except Exception as e:
             log.error("Hugging Face file storage not usable: %s", e)
-            return UnusableBlobs(data_dir / "files", "the Space's HF_TOKEN or HF_FILES_REPO setting is not right "
+            return UnusableBlobs(data_dir / "files", "the HF_TOKEN or HF_FILES_REPO setting is not right "
                                  f"({str(e).splitlines()[0][:150]})")
-    if os.environ.get("SPACE_ID"):
-        return UnusableBlobs(data_dir / "files", "add HF_TOKEN and HF_FILES_REPO in the Space's settings "
-                             "(see the README, step 2.5)")
+    if hosting.host():
+        return UnusableBlobs(data_dir / "files", f"add HF_TOKEN and HF_FILES_REPO in {hosting.settings_place()} "
+                             "(see the README, \"Put it online for free\")")
     return LocalBlobs(data_dir / "files")
 
 

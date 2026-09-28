@@ -20,7 +20,7 @@ from mis_reports.excel_export import build_workbook
 from mis_reports.master_sheet import build_master_sheet
 from mis_reports.pipeline import load_aliases as csv_aliases
 
-from . import auth, db, entries, files, imports, sheets, store
+from . import auth, db, entries, files, hosting, imports, sheets, store
 from .config import BASE, Settings
 from .reports_api import ReportCache, report_json, to_json
 
@@ -114,6 +114,10 @@ class UploadIn(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    if hosting.host() and settings.database_url.startswith("sqlite"):
+        # the host's disk is wiped on every restart, so everything typed in would be lost
+        raise SystemExit(f"Running on {hosting.host()} without an online database. Add DATABASE_URL (the address "
+                         f"Neon gives you) in {hosting.settings_place()}, then redeploy.")
     engine = db.make_engine(settings.database_url)
     db.init_db(engine, alias_seed=csv_aliases())
     if not settings.secret_key:
@@ -408,9 +412,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The addresses other people in the office use to open the app, and where the files are kept."""
         from .office import office_urls
         port = request.url.port or (443 if request.url.scheme == "https" else 80)
-        online = bool(os.environ.get("SPACE_ID") or os.environ.get("PUBLIC_URL"))
-        public = os.environ.get("PUBLIC_URL") or (f"https://{os.environ['SPACE_HOST']}" if os.environ.get("SPACE_HOST")
-                                                  else str(request.base_url).rstrip("/"))
+        online = bool(hosting.host())
+        public = hosting.public_url() or str(request.base_url).rstrip("/")
         return {"online": online, "public_url": public, "urls": [] if online else office_urls(port),
                 "live_file": str(live.path), "data_dir": str(settings.data_dir),
                 "local": request.client is not None and request.client.host in ("127.0.0.1", "::1")}

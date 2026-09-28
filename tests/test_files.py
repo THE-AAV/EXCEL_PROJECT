@@ -150,9 +150,12 @@ def test_hugging_face_storage_is_used_when_configured(tmp_path, monkeypatch):
         def delete_file(self, path_in_repo, **kw):
             calls.append(("delete", path_in_repo))
 
+        def whoami(self):
+            return {"name": "me"}
+
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
-    monkeypatch.setenv("HF_FILES_REPO", "me/business-files")
+    monkeypatch.setenv("HF_FILES_REPO", "business-files")    # just the name: kept under the token's account
     monkeypatch.setenv("HF_TOKEN", "hf_x")
     blobs = F.make_blobs(tmp_path)
     assert isinstance(blobs, F.HFBlobs) and blobs.where == "in your private Hugging Face storage"
@@ -165,11 +168,11 @@ def test_hugging_face_storage_is_used_when_configured(tmp_path, monkeypatch):
                      ("delete", "files/k1.xlsx")]
 
 
-def test_a_space_without_file_storage_refuses_uploads_instead_of_losing_them(tmp_path, monkeypatch):
+def test_an_online_host_without_file_storage_refuses_uploads_instead_of_losing_them(tmp_path, monkeypatch):
     monkeypatch.delenv("HF_FILES_REPO", raising=False)
-    monkeypatch.setenv("SPACE_ID", "me/business-reports")
+    monkeypatch.setenv("KOYEB_APP_NAME", "business-reports")
     blobs = F.make_blobs(tmp_path)
-    assert "HF_TOKEN and HF_FILES_REPO" in blobs.where
+    assert "HF_TOKEN and HF_FILES_REPO" in blobs.where and "Koyeb" in blobs.where
     src = tmp_path / "up"
     src.write_bytes(b"x")
     with pytest.raises(F.HTTPException) as e:

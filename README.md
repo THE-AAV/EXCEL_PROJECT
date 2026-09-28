@@ -59,49 +59,52 @@ access away at once.
 
 ### Put it online for free (no card needed)
 
-The app runs on **Hugging Face** (a free home for web apps, which also keeps your files privately) and keeps the
-data in **Neon** (a free online database). Neither asks for a card. Nobody has to install anything: people open a
-web address and sign in. It takes about 20 minutes, all in the browser.
+The app runs on **Koyeb** (a free home for web apps) and keeps the data in **Neon** (a free online database) and
+the uploaded files in a private **Hugging Face** folder (free storage). None of them normally asks for a card.
+Nobody has to install anything: people open a web address and sign in. It takes about 20 minutes, all in the
+browser.
 
 **1. The database (Neon)**
 1. Go to <https://neon.com> and click **Sign up** (with Google, GitHub or an email address).
 2. Create a project: any name (for example `business`), and the region closest to you.
 3. On the project page click **Connect**, and copy the **connection string** (it starts with `postgresql://`).
-   Keep it somewhere private for step 2.5.
+   Keep it somewhere private for step 3.
 
-**2. The app (Hugging Face)**
+**2. File storage (Hugging Face)**
 1. Go to <https://huggingface.co/join> and make an account (confirm your email address).
 2. Click your picture (top right) → **Settings** → **Access Tokens** → **Create new token**. Choose **Write**,
    name it `business-app`, click **Create**, and copy the token (it starts with `hf_`).
-3. Go to <https://huggingface.co/new-space>. Name it (for example `business-reports`), choose **Docker** and then
-   **Blank**, keep **CPU basic · Free**, choose **Public** (the app has its own sign-in; no data is kept in the
-   Space itself), and click **Create Space**.
-4. In the new Space open **Files**:
-   - **+ Add file** → **Create a new file**, name it `Dockerfile`, paste everything from
-     [`deploy/huggingface/Dockerfile`](deploy/huggingface/Dockerfile), and click **Commit**.
-   - Open `README.md` → **edit**, replace everything with [`deploy/huggingface/README.md`](deploy/huggingface/README.md),
-     and click **Commit**.
-5. Open the Space's **Settings** → **Variables and secrets** and add:
 
-   | Type | Name | Value |
-   |---|---|---|
-   | Secret | `DATABASE_URL` | the Neon connection string from step 1.3 |
-   | Secret | `HF_TOKEN` | the token from step 2.2 |
-   | Secret | `ADMIN_PASSWORD` | the password you will sign in with (at least 8 characters) |
-   | Variable | `HF_FILES_REPO` | your Hugging Face name, then `/business-files` (for example `shubham/business-files`) |
+You don't create anything else there: the app makes a private folder called `business-files` by itself.
 
-6. The Space builds by itself (a few minutes) and then shows **Running**. Your app's address is
-   `https://<your name>-<space name>.hf.space`, for example `https://shubham-business-reports.hf.space`.
-   Open it and sign in as **admin** with the password from step 5.
-7. **Import** your workbook, add people on **Users**, and give them the address and their password.
+**3. The app (Koyeb)**
+1. Go to <https://app.koyeb.com/auth/signup> and sign up (with GitHub or an email address).
+2. Click this button (it fills in everything it can):
+
+   [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=business-reports&type=git&repository=github.com/THE-AAV/EXCEL_PROJECT&branch=claude%2Fexcel-debtor-creditor-pl-reports-o0o0zm&builder=dockerfile&instance_type=free&regions=was&ports=8000%3Bhttp%3B%2F&env%5BDATABASE_URL%5D=&env%5BHF_TOKEN%5D=&env%5BHF_FILES_REPO%5D=business-files&env%5BADMIN_PASSWORD%5D=)
+
+3. Under **Environment variables**, fill in the empty ones:
+
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | the Neon connection string from step 1.3 |
+   | `HF_TOKEN` | the token from step 2.2 |
+   | `ADMIN_PASSWORD` | the password you will sign in with (at least 8 characters) |
+
+   Leave `HF_FILES_REPO` as `business-files`. Check that the instance says **Free**, then click **Deploy**.
+4. Koyeb builds the app (about 5 minutes) and then shows **Healthy**. Your app's address is shown at the top,
+   ending in `.koyeb.app`. Open it and sign in as **admin** with the password from step 3.
+5. **Import** your workbook, add people on **Users** (the page also shows the address to share), and give them
+   the address and their password.
 
 **Good to know**
-- Everything is kept outside the Space, so restarts lose nothing: the data in Neon, the uploaded files in a
-  private Hugging Face dataset called `business-files` (free space: 100 GB; one file can be up to 1 GB in the
-  app).
-- If nobody opens the app for two days it goes to sleep. The next visit wakes it up, which takes about a minute.
-- **Getting a newer version:** in the Space's **Settings**, click **Factory rebuild**.
-- Use the `.hf.space` address. The Space's page on huggingface.co shows the app in a frame that can't sign in.
+- Everything is kept outside Koyeb, so restarts lose nothing: the data in Neon, the uploaded files in your
+  private Hugging Face folder (free space: 100 GB; one file can be up to 1 GB in the app).
+- If nobody opens the app for an hour it goes to sleep. The next visit wakes it up, which takes about a minute.
+- **Getting a newer version:** in Koyeb open the service and click **Redeploy**.
+- If Koyeb ever asks for a card (it does this only when it can't tell you are a real person), stop there and use
+  [Run it for the whole office](#run-it-for-the-whole-office-free) instead.
+- Advanced: the app also runs on any other host that builds the `Dockerfile`. Give it the same three settings.
 
 ### Run it for the whole office (free)
 
@@ -368,7 +371,7 @@ server/entries.py       entering transactions: runs mis_reports/entries.py on th
 server/office.py        Start_Web_App.bat: runs the app for the office network, prints the addresses, daily backups
 server/sheets.py        the data sheets for the Sheets page
 server/files.py         the Files page: folders, versions, uploads in pieces, kept on disk or in a Hugging Face dataset
-deploy/huggingface/     the two files for the free Hugging Face Space (see "Put it online for free")
+server/hosting.py       knows when it runs on an internet host (Koyeb, Render, Hugging Face) and its web address
 tests/test_server.py    roles, sign-in, import, "database reports equal file reports" and the generated Master Sheet
 tests/test_web_entry.py entering transactions, undo, live updates, office addresses and backups
 tests/test_files.py     the Files page

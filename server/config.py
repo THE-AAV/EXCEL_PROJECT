@@ -6,6 +6,8 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import hosting
+
 BASE = Path(__file__).resolve().parent.parent
 
 
@@ -40,7 +42,9 @@ class Settings:
     session_hours: float = float(os.environ.get("SESSION_HOURS", "12"))
     max_failed_logins: int = int(os.environ.get("MAX_FAILED_LOGINS", "5"))
     lockout_minutes: int = int(os.environ.get("LOCKOUT_MINUTES", "15"))
-    secure_cookies: bool = os.environ.get("SECURE_COOKIES", "0") == "1"
+    # on for internet hosts (they use https), off for the office network (plain http)
+    secure_cookies: bool = field(default_factory=lambda: os.environ.get(
+        "SECURE_COOKIES", "1" if hosting.host() else "0") == "1")
     # optional: creates this admin on a brand-new installation instead of the set-up page
     admin_username: str = os.environ.get("ADMIN_USERNAME", "admin")
     admin_password: str = os.environ.get("ADMIN_PASSWORD", "")
